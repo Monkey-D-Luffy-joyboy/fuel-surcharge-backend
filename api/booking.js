@@ -6,7 +6,9 @@ function getFuelSurcharge() {
   // Current dynamic surcharge = $31.50 AUD
   return 31.50; 
 }
-
+app.get('/', (req, res) => {
+  res.send('Backend API is running!');
+});
 module.exports = async (req, res) => {
   // Set full CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
