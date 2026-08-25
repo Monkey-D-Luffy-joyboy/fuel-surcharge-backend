@@ -2,14 +2,14 @@
   "version": 2,
   "builds": [
     {
-      "src": "api/booking.js",
+      "src": "api/checkout.js",
       "use": "@vercel/node"
     }
   ],
   "routes": [
     {
-      "src": "/(.*)",
-      "dest": "api/booking.js"
+      "src": "/api/checkout",
+      "dest": "/api/checkout.js"
     }
   ]
 }
