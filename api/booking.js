@@ -26,11 +26,11 @@ module.exports = async (req, res) => {
   res.status(200).json({
     goldCoastTransfer: {
       totalPrice: goldCoastTotal,
-      stripeUrl: "https://buy.stripe.com/YOUR_REAL_GOLD_COAST_STRIPE_LINK"
+      stripeUrl: "https://buy.stripe.com/28EaEYfmf5ls8m4dKZ2go01"
     },
     brisbaneTransfer: {
       totalPrice: brisbaneTotal,
-      stripeUrl: "https://buy.stripe.com/YOUR_REAL_BRISBANE_STRIPE_LINK"
+      stripeUrl: "https://buy.stripe.com/7sY5kE7TN8xEbyg5et2go02"
     }
   });
 };
