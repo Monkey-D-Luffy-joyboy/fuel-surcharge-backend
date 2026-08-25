@@ -1,5 +1,5 @@
 module.exports = async (req, res) => {
-  let fuelPrice = 2.39; // Default rate per liter
+  let fuelPrice = 2.39;
 
   try {
     const apiRes = await fetch("https://api.collectapi.com/gasPrice/stateUsaPrice?state=QLD");
@@ -11,13 +11,13 @@ module.exports = async (req, res) => {
     fuelPrice = 2.39;
   }
 
-  // Brisbane Transfer (348 km, Base: $526.68)
+  // Brisbane Transfer
   const brisbaneBase = 526.68;
   const brisbaneKm = 348;
   const brisbaneFuelCost = (brisbaneKm / 100) * 10 * fuelPrice;
   const brisbaneTotal = Math.round(brisbaneBase + brisbaneFuelCost);
 
-  // Gold Coast Transfer (132.4 km, Base: $193.50)
+  // Gold Coast Transfer
   const goldCoastBase = 193.50;
   const goldCoastKm = 132.4;
   const goldCoastFuelCost = (goldCoastKm / 100) * 10 * fuelPrice;
