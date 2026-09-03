@@ -1,4 +1,4 @@
-import crypto from 'crypto';
+const crypto = require('crypto');
 
 // Base fares and one-way distances per route. `custom` uses the Gold Coast figures as a
 // default estimate until a real distance is calculated for arbitrary custom addresses.
@@ -84,7 +84,7 @@ function signToken(payload) {
   return `${base}.${sig}`;
 }
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
