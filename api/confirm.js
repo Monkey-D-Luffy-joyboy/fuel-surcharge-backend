@@ -1,7 +1,6 @@
-import crypto from 'crypto';
-import Stripe from 'stripe';
-import { google } from 'googleapis';
-
+const crypto = require('crypto');
+const Stripe = require('stripe');
+const { google } = require('googleapis');
 const SECRET = process.env.BOOKING_TOKEN_SECRET;
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
@@ -79,7 +78,7 @@ async function sendClientConfirmation(booking) {
   });
 }
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   const token = req.query.token;
   const booking = token && verifyToken(token);
 
