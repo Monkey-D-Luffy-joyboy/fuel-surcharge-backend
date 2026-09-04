@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const ROUTES = {
   gc: { base: 193.50, km: 132.4 },
   bne: { base: 526.68, km: 348 },
-  custom: { base: 193.50, km: 132.4 },
+  custom: { base: 1, km: 40 },
 };
 
 const FALLBACK_FUEL_PRICE = 2.39; // used only if the live lookup fails
