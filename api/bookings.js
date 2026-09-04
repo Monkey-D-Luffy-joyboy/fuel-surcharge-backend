@@ -10,7 +10,7 @@ const FIXED_ROUTES = {
 
 // Custom route: flat $100 covers the first 40km (fuel already included in that flat rate),
 // then $2.50/km for every km beyond that. No separate live-fuel-price component here.
-const CUSTOM_FLAT_FEE = 1;
+const CUSTOM_FLAT_FEE = 100;
 const CUSTOM_FLAT_RADIUS_KM = 40;
 const CUSTOM_PER_KM_RATE = 2.50;
 
