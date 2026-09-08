@@ -8,11 +8,14 @@ const FIXED_ROUTES = {
   bne: { base: 526.68, km: 348 },
 };
 
-// Custom route: flat $100 covers the first 40km (fuel already included in that flat rate),
-// then $2.50/km for every km beyond that. No separate live-fuel-price component here.
-const CUSTOM_FLAT_FEE = 100;
+// Custom route base fare: flat $115 covers the first 40km, then ~$3.00/km beyond that.
+// Calibrated so it matches the dedicated Gold Coast ($193.50 base) and Brisbane ($526.68
+// base) routes at their real one-way distances (66.4km and 178.1km respectively). Live
+// fuel is added on top separately below, same as the fixed routes — this is no longer a
+// static fuel-included number, so it stays accurate as fuel prices change.
+const CUSTOM_FLAT_FEE = 115;
 const CUSTOM_FLAT_RADIUS_KM = 40;
-const CUSTOM_PER_KM_RATE = 2.50;
+const CUSTOM_PER_KM_RATE = 3.00;
 
 const FALLBACK_FUEL_PRICE = 2.39; // used only if the live lookup fails
 
@@ -99,7 +102,23 @@ async function calcPrice(booking) {
     // back to assuming the trip is within the flat 40km radius rather than guessing high.
     const usedDistanceKm = distanceKm ?? CUSTOM_FLAT_RADIUS_KM;
     const extraKm = Math.max(0, usedDistanceKm - CUSTOM_FLAT_RADIUS_KM);
-    oneWay = CUSTOM_FLAT_FEE + extraKm * CUSTOM_PER_KM_RATE;
+    const base = CUSTOM_FLAT_FEE + extraKm * CUSTOM_PER_KM_RATE;
+
+    const rawFuelPrice = await getRawFuelPrice();
+    const offset = getFuelPriceOffset();
+    const adjustedFuelPrice = rawFuelPrice + offset;
+    // Fixed routes' "km" figures are round-trip distances (per the business's own cost
+    // sheet), so double the one-way distance here to use the identical fuel formula
+    // consistently across both custom and fixed routes.
+    const roundTripKm = usedDistanceKm * 2;
+    const fuelCost = (roundTripKm / 100) * 10 * adjustedFuelPrice;
+    oneWay = base + fuelCost;
+
+    fuelInfo = {
+      rawFuelPrice: Math.round(rawFuelPrice * 100) / 100,
+      offset,
+      adjustedFuelPrice: Math.round(adjustedFuelPrice * 100) / 100,
+    };
     distanceInfo = {
       distanceKm: Math.round(usedDistanceKm * 10) / 10,
       wasCalculated: distanceKm !== null,
