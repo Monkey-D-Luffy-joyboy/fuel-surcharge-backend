@@ -61,10 +61,16 @@ async function getDistanceKm(originAddress, destinationAddress) {
   const apiKey = process.env.GOOGLE_SERVER_MAPS_KEY;
   if (!apiKey || !originAddress || !destinationAddress) return null;
 
+  // Always query in a fixed alphabetical order, regardless of actual pickup/drop-off
+  // direction, so A→B and B→A always return the identical distance (and therefore
+  // identical price) — Google's routing can otherwise differ slightly by direction
+  // (one-way streets, highway ramps, etc.).
+  const [pointA, pointB] = [originAddress, destinationAddress].sort();
+
   try {
     const url = new URL('https://maps.googleapis.com/maps/api/distancematrix/json');
-    url.searchParams.set('origins', originAddress);
-    url.searchParams.set('destinations', destinationAddress);
+    url.searchParams.set('origins', pointA);
+    url.searchParams.set('destinations', pointB);
     url.searchParams.set('units', 'metric');
     url.searchParams.set('key', apiKey);
 
