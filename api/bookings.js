@@ -200,7 +200,7 @@ module.exports = async function handler(req, res) {
       <strong>Luggage:</strong> ${booking.bags} bags, ${booking.boards} surfboards<br/>
       <strong>Flight number:</strong> ${booking.flight || '—'}<br/>
       <strong>Questions/requests:</strong> ${booking.question || '—'}<br/>
-      <strong>Price:</strong> A$${price}
+      <strong>料金：</strong> A$${price}
     </p>
     ${fuelInfo ? `
     <p style="color:#888;font-size:12px;">
@@ -213,10 +213,10 @@ module.exports = async function handler(req, res) {
     </p>` : ''}
     <p>
       <a href="${confirmUrl}" style="background:#16332F;color:#fff;padding:12px 22px;border-radius:24px;text-decoration:none;display:inline-block;">
-        Confirm &amp; charge this booking
+        予約を確定して決済する
       </a>
     </p>
-    <p style="color:#888;font-size:12px;">This link charges the client's card for A$${price}, creates the calendar event, and emails their confirmation — all in one click.</p>
+    <p style="color:#888;font-size:12px;">このリンクをクリックすると、A$${price}の決済、カレンダー登録、お客様への確認メール送信が一度に行われます。</p>
   `;
 
   const emailRes = await fetch('https://api.resend.com/emails', {
