@@ -40,10 +40,20 @@ function rentalText(inquiry) {
   if (!inquiry.rentalRequested || !inquiry.rental) return 'なし';
   const r = inquiry.rental;
   const items = [];
-  if (r.wetsuit) items.push(`ウェットスーツ（${r.wetsuitSize || 'サイズ未選択'}）`);
-  if (r.board) items.push(`サーフボード（${r.boardType || 'タイプ未選択'}）`);
-  if (r.bodyboard) items.push('ボディボード');
-  if (r.snorkel) items.push('シュノーケルセット');
+  // Headcount activities (半日サーフ送迎, 2セッションサーフ送迎, 初心者サーフガイド)
+  // send quantities (wetsuitQty etc.); others send plain yes/no booleans.
+  const hasQuantities = ['wetsuitQty', 'boardQty', 'bodyboardQty', 'snorkelQty'].some(k => typeof r[k] === 'number');
+  if (hasQuantities) {
+    if (r.wetsuitQty > 0) items.push(`ウェットスーツ ×${r.wetsuitQty}（${r.wetsuitSize || 'サイズ未選択'}）`);
+    if (r.boardQty > 0) items.push(`サーフボード ×${r.boardQty}（${r.boardType || 'タイプ未選択'}）`);
+    if (r.bodyboardQty > 0) items.push(`ボディボード ×${r.bodyboardQty}`);
+    if (r.snorkelQty > 0) items.push(`シュノーケルセット ×${r.snorkelQty}`);
+  } else {
+    if (r.wetsuit) items.push(`ウェットスーツ（${r.wetsuitSize || 'サイズ未選択'}）`);
+    if (r.board) items.push(`サーフボード（${r.boardType || 'タイプ未選択'}）`);
+    if (r.bodyboard) items.push('ボディボード');
+    if (r.snorkel) items.push('シュノーケルセット');
+  }
   return items.length ? items.join('、') : '希望（詳細未選択）';
 }
 
