@@ -56,9 +56,14 @@ async function createCalendarEvents(inquiry, ref) {
   );
   const calendar = google.calendar({ version: 'v3', auth });
 
+  const isRental = inquiry.activity === 'rental_board';
+  // For a rental order, "pax" in the form doubles as board quantity
+  // (capped 1-6 client-side already; re-clamped here defensively).
+  const boardCount = Math.max(1, Math.min(6, parseInt(inquiry.pax, 10) || 1));
+
   const description = [
     `参照番号: ${ref}`,
-    `人数: ${inquiry.pax || '—'}名`,
+    isRental ? `本数: ${boardCount}枚` : `人数: ${inquiry.pax || '—'}名`,
     `ピックアップ: ${inquiry.pickup === 'yes' ? `有り（${inquiry.pickupAddress || '住所未入力'}）` : '無し'}`,
     `スキルレベル: ${inquiry.skillLabel || '—'}`,
     `レンタル: ${rentalText(inquiry)}`,
@@ -69,7 +74,14 @@ async function createCalendarEvents(inquiry, ref) {
 
   for (const date of inquiry.dates) {
     const start = new Date(`${date}T${inquiry.time}:00${TZ_OFFSET}`);
-    const end = new Date(start.getTime() + 3 * 60 * 60000); // assume ~3hr session
+    const end = new Date(start.getTime() + 3 * 60 * 60000); // assume ~3hr session/pickup window
+
+    // Tagged so surf-availability.js can tell rental (inventory-counted)
+    // bookings apart from guide-led (whole-day-blocking) ones without
+    // having to parse the event title.
+    const extendedProperties = isRental
+      ? { private: { surfType: 'rental', boardCount: String(boardCount) } }
+      : { private: { surfType: 'guide' } };
 
     await calendar.events.insert({
       calendarId: process.env.SURF_CALENDAR_ID,
@@ -78,6 +90,7 @@ async function createCalendarEvents(inquiry, ref) {
         description,
         start: { dateTime: start.toISOString() },
         end: { dateTime: end.toISOString() },
+        extendedProperties,
       },
     });
   }
