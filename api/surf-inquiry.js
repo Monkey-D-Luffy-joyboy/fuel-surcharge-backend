@@ -61,16 +61,26 @@ async function createCalendarEvents(inquiry, ref) {
   // (capped 1-6 client-side already; re-clamped here defensively).
   const boardCount = Math.max(1, Math.min(6, parseInt(inquiry.pax, 10) || 1));
 
+  // "pax" means something different per activity (headcount / board count /
+  // shoot duration) — the front-end tells us which via secondaryFieldLabel
+  // + secondaryFieldValueLabel rather than us having to guess from the raw
+  // value. Falls back to the old "人数: X名" phrasing if an older client
+  // build submits without those fields.
+  const secondaryLine = inquiry.secondaryFieldLabel
+    ? `${inquiry.secondaryFieldLabel}: ${inquiry.secondaryFieldValueLabel || inquiry.pax || '—'}`
+    : `人数: ${inquiry.pax || '—'}名`;
+
   const description = [
     `参照番号: ${ref}`,
-    isRental ? `本数: ${boardCount}枚` : `人数: ${inquiry.pax || '—'}名`,
+    secondaryLine,
     `ピックアップ: ${inquiry.pickup === 'yes' ? `有り（${inquiry.pickupAddress || '住所未入力'}）` : '無し'}`,
     `スキルレベル: ${inquiry.skillLabel || '—'}`,
     `レンタル: ${rentalText(inquiry)}`,
+    inquiry.rentalAddonJpy ? `レンタル料金: ¥${Number(inquiry.rentalAddonJpy).toLocaleString('ja-JP')}` : null,
     `電話: ${inquiry.phone || '—'}`,
     `メール: ${inquiry.email || '—'}`,
     `質問・要望: ${inquiry.question || '—'}`,
-  ].join('\n');
+  ].filter(Boolean).join('\n');
 
   for (const date of inquiry.dates) {
     const start = new Date(`${date}T${inquiry.time}:00${TZ_OFFSET}`);
@@ -114,10 +124,11 @@ async function sendOwnerNotification(inquiry, ref) {
         <table cellpadding="6" style="border-collapse:collapse;">
           <tr><td>アクティビティ</td><td>${inquiry.activityLabel || '—'}</td></tr>
           <tr><td>目安料金</td><td>${inquiry.priceJpy || '—'}</td></tr>
-          <tr><td>人数</td><td>${inquiry.pax || '—'}名</td></tr>
+          <tr><td>${inquiry.secondaryFieldLabel || '人数'}</td><td>${inquiry.secondaryFieldValueLabel || (inquiry.pax ? inquiry.pax + '名' : '—')}</td></tr>
           <tr><td>ピックアップ</td><td>${inquiry.pickup === 'yes' ? `有り（${inquiry.pickupAddress || '住所未入力'}）` : '無し'}</td></tr>
           <tr><td>スキルレベル</td><td>${inquiry.skillLabel || '—'}</td></tr>
           <tr><td>レンタル</td><td>${rentalText(inquiry)}</td></tr>
+          ${inquiry.rentalAddonJpy ? `<tr><td>レンタル料金</td><td>¥${Number(inquiry.rentalAddonJpy).toLocaleString('ja-JP')}</td></tr>` : ''}
           <tr><td>希望日</td><td>${dateList}</td></tr>
           <tr><td>開始時間</td><td>${inquiry.time || '—'}</td></tr>
           <tr><td>お名前</td><td>${inquiry.name}</td></tr>
