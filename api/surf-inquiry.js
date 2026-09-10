@@ -36,16 +36,33 @@ function makeRef() {
   return 'SURF-' + Math.floor(100000 + Math.random() * 900000);
 }
 
+const BOARD_TYPE_LABELS_JA = { short: 'ショート', long: 'ロング', soft: 'ソフトボード' };
+
+function countsToText(counts, labelFor) {
+  if (!counts) return '';
+  return Object.entries(counts)
+    .filter(([, v]) => v > 0)
+    .map(([k, v]) => `${labelFor ? labelFor(k) : k}×${v}`)
+    .join('・');
+}
+
 function rentalText(inquiry) {
   if (!inquiry.rentalRequested || !inquiry.rental) return 'なし';
   const r = inquiry.rental;
   const items = [];
   // Headcount activities (半日サーフ送迎, 2セッションサーフ送迎, 初心者サーフガイド)
-  // send quantities (wetsuitQty etc.); others send plain yes/no booleans.
+  // send quantities plus a size/type breakdown (wetsuitQty + wetsuitSizeCounts,
+  // etc.); other activities send plain yes/no booleans with one flat size.
   const hasQuantities = ['wetsuitQty', 'boardQty', 'bodyboardQty', 'snorkelQty'].some(k => typeof r[k] === 'number');
   if (hasQuantities) {
-    if (r.wetsuitQty > 0) items.push(`ウェットスーツ ×${r.wetsuitQty}（${r.wetsuitSize || 'サイズ未選択'}）`);
-    if (r.boardQty > 0) items.push(`サーフボード ×${r.boardQty}（${r.boardType || 'タイプ未選択'}）`);
+    if (r.wetsuitQty > 0) {
+      const sizes = countsToText(r.wetsuitSizeCounts);
+      items.push(`ウェットスーツ ×${r.wetsuitQty}（${sizes || 'サイズ未選択'}）`);
+    }
+    if (r.boardQty > 0) {
+      const types = countsToText(r.boardTypeCounts, k => BOARD_TYPE_LABELS_JA[k] || k);
+      items.push(`サーフボード ×${r.boardQty}（${types || 'タイプ未選択'}）`);
+    }
     if (r.bodyboardQty > 0) items.push(`ボディボード ×${r.bodyboardQty}`);
     if (r.snorkelQty > 0) items.push(`シュノーケルセット ×${r.snorkelQty}`);
   } else {
