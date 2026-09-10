@@ -2,29 +2,66 @@
  * POST /api/surf-inquiry
  *
  * Receives a Surf Guide inquiry from surf-guide-flow.html, then:
- *   1. Writes one Google Calendar event PER REQUESTED DATE onto the
- *      dedicated Surf Guide calendar (SURF_CALENDAR_ID), so the owner
- *      (jpgbyron@gmail.com) sees every new inquiry appear in Google
- *      Calendar immediately — this is what makes those dates read as
- *      "unavailable" the next time surf-availability.js is queried.
- *   2. Emails the owner (OWNER_EMAIL) a summary via Resend, same pattern
+ *   1. Re-validates every requested date/time against the SHARED calendar
+ *      (see the scheduling-model note below) — the availability endpoint's
+ *      view can be a few seconds to minutes stale by the time someone
+ *      submits, so this is the authoritative check, not just a courtesy.
+ *   2. Writes real timed calendar event(s) — not whole-day blocks — onto
+ *      BOOKINGS_CALENDAR_ID, so the owner sees every new inquiry appear in
+ *      Google Calendar immediately, and so it counts against every other
+ *      service's (Transport included) availability too.
+ *   3. Emails the owner (OWNER_EMAIL) a summary via Resend, same pattern
  *      as bookings.js uses for Transport.
  *
  * There is no confirm/charge step here (unlike Transport's bookings.js →
- * confirm.js flow) — Surf Guide is inquiry-based with no Stripe charge
- * gating it, so the event is written and the email sent directly on
- * submission. (The separate "レンタルサーフボード" Stripe Payment Link,
- * when set up, is independent of this endpoint.)
+ * confirm.js flow, which is being rebuilt separately in Phase 2) — Surf
+ * Guide is inquiry-based with no Stripe charge gating it yet. (The
+ * standalone Stripe Payment Links for each activity are independent of
+ * this endpoint.)
+ *
+ * ============================================================
+ * PHASE 1 REWRITE — shared calendar, real time-blocks.
+ * ------------------------------------------------------------
+ * See the matching header comment in surf-availability.js for the full
+ * rationale. Scheduling constants/helpers below are duplicated there and
+ * in bookings.js rather than imported from a shared module (a shared _lib
+ * file previously broke Vercel's bundling in this project) — if you
+ * change a number here, change it in both other files too.
  *
  * Env vars required:
- *   GOOGLE_CLIENT_EMAIL, GOOGLE_PRIVATE_KEY, SURF_CALENDAR_ID  (calendar)
- *   RESEND_API_KEY, OWNER_EMAIL                                (email)
+ *   GOOGLE_CLIENT_EMAIL, GOOGLE_PRIVATE_KEY, BOOKINGS_CALENDAR_ID (or the
+ *     legacy SURF_CALENDAR_ID, used as a fallback)
+ *   GOOGLE_SERVER_MAPS_KEY   (rental delivery-radius check — already set
+ *     for Transport's Custom Route pricing, reused here)
+ *   RESEND_API_KEY, OWNER_EMAIL
  */
 const { google } = require('googleapis');
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const OWNER_EMAIL = process.env.OWNER_EMAIL;
 const TZ_OFFSET = '+10:00'; // see note in surf-availability.js re: NSW daylight saving
+// Customers are mostly calling from Japan — directing them to phone Ryu means an
+// expensive international call on their end, so every customer-facing "if this
+// doesn't work, contact us" message points here instead. Duplicated across files
+// per this project's convention; keep it identical everywhere if it ever changes.
+const CONTACT_EMAIL = 'bookings@jpgbyron.com';
+
+// ---- shared scheduling model (see surf-availability.js) ----
+const BOOKINGS_CALENDAR_ID = process.env.BOOKINGS_CALENDAR_ID || process.env.SURF_CALENDAR_ID;
+const INTER_BOOKING_BUFFER_MIN = 30;
+const ACTIVITY_DURATION_MIN = {
+  half_day: 180,
+  two_session: 360,
+  beginner_guide: 180,
+};
+const VALID_PHOTO_VIDEO_DURATIONS = [60, 120, 180];
+const RENTAL_DROPOFF_PICKUP_MIN = 60;
+const RENTAL_SERVICE_RADIUS_KM = 20;
+const RENTAL_BASE_ADDRESS = 'Byron Bay NSW, Australia';
+// Same-day rental: if pickup isn't possible at this default evening time
+// (or after it), the nearest earlier free slot that day is used instead —
+// see pickCollectionTime() below.
+const RENTAL_DEFAULT_COLLECTION_MIN = 17 * 60; // 17:00
 
 function corsHeaders(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -34,6 +71,127 @@ function corsHeaders(res) {
 
 function makeRef() {
   return 'SURF-' + Math.floor(100000 + Math.random() * 900000);
+}
+
+function overlapsAny(startMs, endMs, intervals) {
+  return intervals.some(iv => startMs < iv.endMs && endMs > iv.startMs);
+}
+
+// Fetches every non-cancelled event in [rangeStart, rangeEnd) from the
+// shared calendar and returns busy intervals as {startMs, endMs}, each
+// already padded by INTER_BOOKING_BUFFER_MIN on both sides — identical
+// logic to surf-availability.js (duplicated per the file-header note).
+async function fetchPaddedBusyIntervals(calendar, rangeStart, rangeEnd) {
+  const events = [];
+  let pageToken;
+  do {
+    const resp = await calendar.events.list({
+      calendarId: BOOKINGS_CALENDAR_ID,
+      timeMin: rangeStart.toISOString(),
+      timeMax: rangeEnd.toISOString(),
+      singleEvents: true,
+      maxResults: 2500,
+      pageToken,
+    });
+    events.push(...(resp.data.items || []));
+    pageToken = resp.data.nextPageToken;
+  } while (pageToken);
+
+  const padMs = INTER_BOOKING_BUFFER_MIN * 60000;
+  const intervals = [];
+  for (const ev of events) {
+    if (ev.status === 'cancelled') continue;
+    let startMs, endMs;
+    if (ev.start.dateTime) {
+      startMs = new Date(ev.start.dateTime).getTime();
+      endMs = new Date(ev.end.dateTime).getTime();
+    } else if (ev.start.date) {
+      startMs = new Date(`${ev.start.date}T00:00:00${TZ_OFFSET}`).getTime();
+      endMs = new Date(`${ev.end.date}T00:00:00${TZ_OFFSET}`).getTime();
+    } else {
+      continue;
+    }
+    intervals.push({ startMs: startMs - padMs, endMs: endMs + padMs });
+  }
+  return intervals;
+}
+
+function slotStartDate(dateStr, minutesFromMidnight) {
+  const hh = String(Math.floor(minutesFromMidnight / 60)).padStart(2, '0');
+  const mm = String(minutesFromMidnight % 60).padStart(2, '0');
+  return new Date(`${dateStr}T${hh}:${mm}:00${TZ_OFFSET}`);
+}
+function minutesFromTimeStr(timeStr) {
+  const [h, m] = timeStr.split(':').map(Number);
+  return h * 60 + (m || 0);
+}
+
+// Plain calendar-date arithmetic (Date.UTC as an inert integer anchor, no
+// timezone offset involved) — used for all-day event end.date fields,
+// which are bare date strings with no timezone attached. Routing this
+// through TZ_OFFSET/toISOString the way event dateTimes are built
+// elsewhere in this file produced an off-by-one (see eachDateInRange's
+// history in surf-availability.js for the same class of bug).
+function addOneDay(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const next = new Date(Date.UTC(y, m - 1, d) + 24 * 60 * 60000);
+  return `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, '0')}-${String(next.getUTCDate()).padStart(2, '0')}`;
+}
+
+// Picks a collection (pickup) time on `dateStr`: the default evening slot
+// if it's free, otherwise the latest free RENTAL_DROPOFF_PICKUP_MIN slot
+// that day at/after 07:00, so a same-day rental still gets a real,
+// non-conflicting pickup time rather than failing outright. Returns null
+// if literally nothing fits that day. Callers pass in whatever busy
+// intervals should count for this check — e.g. buildPlan() adds the same
+// day's delivery block explicitly for a one-day rental.
+function pickCollectionTime(dateStr, busyIntervals) {
+  const tryMin = (mins) => {
+    const startMs = slotStartDate(dateStr, mins).getTime();
+    const endMs = startMs + RENTAL_DROPOFF_PICKUP_MIN * 60000;
+    return !overlapsAny(startMs, endMs, busyIntervals) ? { startMs, endMs, mins } : null;
+  };
+  const preferred = tryMin(RENTAL_DEFAULT_COLLECTION_MIN);
+  if (preferred) return preferred;
+  // Walk backwards from the default time in 30-min steps looking for a fit,
+  // down to 07:00.
+  for (let mins = RENTAL_DEFAULT_COLLECTION_MIN - 30; mins >= 7 * 60; mins -= 30) {
+    const hit = tryMin(mins);
+    if (hit) return hit;
+  }
+  // Then forwards from the default time up to 19:00.
+  for (let mins = RENTAL_DEFAULT_COLLECTION_MIN + 30; mins + RENTAL_DROPOFF_PICKUP_MIN <= 19 * 60; mins += 30) {
+    const hit = tryMin(mins);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+// Straight-line fallback aside, this uses the same Google Distance Matrix
+// API Transport's Custom Route pricing already calls (GOOGLE_SERVER_MAPS_KEY),
+// so no new credentials are needed. Unlike the availability calendar (which
+// fails OPEN if a lookup breaks), this fails CLOSED — if we can't verify an
+// address is within range, we don't want to promise a delivery there.
+async function distanceFromBaseKm(address) {
+  const apiKey = process.env.GOOGLE_SERVER_MAPS_KEY;
+  if (!apiKey || !address) return null;
+  try {
+    const url = new URL('https://maps.googleapis.com/maps/api/distancematrix/json');
+    url.searchParams.set('origins', RENTAL_BASE_ADDRESS);
+    url.searchParams.set('destinations', address);
+    url.searchParams.set('units', 'metric');
+    url.searchParams.set('key', apiKey);
+    const res = await fetch(url.toString());
+    const data = await res.json();
+    const element = data?.rows?.[0]?.elements?.[0];
+    if (data?.status === 'OK' && element?.status === 'OK' && element.distance?.value != null) {
+      return element.distance.value / 1000;
+    }
+    console.warn('Rental distance check returned no usable result:', JSON.stringify(data));
+  } catch (e) {
+    console.warn('Rental distance check request failed:', e);
+  }
+  return null;
 }
 
 const BOARD_TYPE_LABELS_JA = { short: 'ショート', long: 'ロング', soft: 'ソフトボード' };
@@ -50,9 +208,6 @@ function rentalText(inquiry) {
   if (!inquiry.rentalRequested || !inquiry.rental) return 'なし';
   const r = inquiry.rental;
   const items = [];
-  // Headcount activities (半日サーフ送迎, 2セッションサーフ送迎, 初心者サーフガイド)
-  // send quantities plus a size/type breakdown (wetsuitQty + wetsuitSizeCounts,
-  // etc.); other activities send plain yes/no booleans with one flat size.
   const hasQuantities = ['wetsuitQty', 'boardQty', 'bodyboardQty', 'snorkelQty'].some(k => typeof r[k] === 'number');
   if (hasQuantities) {
     if (r.wetsuitQty > 0) {
@@ -74,25 +229,113 @@ function rentalText(inquiry) {
   return items.length ? items.join('、') : '希望（詳細未選択）';
 }
 
-async function createCalendarEvents(inquiry, ref) {
-  const auth = new google.auth.JWT(
-    process.env.GOOGLE_CLIENT_EMAIL,
-    null,
-    process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-    ['https://www.googleapis.com/auth/calendar']
-  );
-  const calendar = google.calendar({ version: 'v3', auth });
-
+// Pre-validates every timed block this inquiry would need against the
+// CURRENT shared calendar, returning either {ok:true, plan} or
+// {ok:false, reason} — nothing is written to the calendar until every
+// block in the plan is confirmed clear, so a multi-date request can't
+// partially succeed and then fail halfway through.
+async function buildPlan(calendar, inquiry) {
   const isRental = inquiry.activity === 'rental_board';
-  // For a rental order, "pax" in the form doubles as board quantity
-  // (capped 1-6 client-side already; re-clamped here defensively).
   const boardCount = Math.max(1, Math.min(6, parseInt(inquiry.pax, 10) || 1));
 
-  // "pax" means something different per activity (headcount / board count /
-  // shoot duration) — the front-end tells us which via secondaryFieldLabel
-  // + secondaryFieldValueLabel rather than us having to guess from the raw
-  // value. Falls back to the old "人数: X名" phrasing if an older client
-  // build submits without those fields.
+  let durationMin;
+  if (inquiry.activity === 'photo' || inquiry.activity === 'video') {
+    const requested = parseInt(inquiry.pax, 10);
+    if (!VALID_PHOTO_VIDEO_DURATIONS.includes(requested)) {
+      return { ok: false, reason: '撮影時間の指定が正しくありません。ページを再読み込みしてもう一度お試しください。' };
+    }
+    durationMin = requested;
+  } else if (!isRental) {
+    durationMin = ACTIVITY_DURATION_MIN[inquiry.activity] || 180;
+  }
+
+  // Look a little wider than the requested dates so pickCollectionTime()
+  // can see same-day context correctly.
+  const allDates = inquiry.dates.slice().sort();
+  const rangeStart = new Date(`${allDates[0]}T00:00:00${TZ_OFFSET}`);
+  const rangeEnd = new Date(`${allDates[allDates.length - 1]}T23:59:59${TZ_OFFSET}`);
+  const busyIntervals = await fetchPaddedBusyIntervals(calendar, rangeStart, rangeEnd);
+
+  const blocks = []; // { startMs, endMs, summarySuffix, extendedProperties }
+
+  if (isRental) {
+    if (inquiry.pickup === 'yes') {
+      const km = await distanceFromBaseKm(inquiry.pickupAddress);
+      if (km === null) {
+        return { ok: false, reason: `ご指定の配達先住所を確認できませんでした。住所をご確認のうえ再度お試しいただくか、メール（${CONTACT_EMAIL}）にてご連絡ください。` };
+      }
+      if (km > RENTAL_SERVICE_RADIUS_KM) {
+        return { ok: false, reason: `大変申し訳ございませんが、配達サービスはバイロンベイから${RENTAL_SERVICE_RADIUS_KM}km圏内（バイロンベイ／バランガリー／レノックスヘッド周辺）に限らせていただいております。ご希望の場合はメール（${CONTACT_EMAIL}）にてご相談ください。` };
+      }
+    }
+
+    const first = allDates[0];
+    const last = allDates[allDates.length - 1];
+
+    // Delivery: use the customer's chosen start time on the first day.
+    const deliveryStartMs = slotStartDate(first, minutesFromTimeStr(inquiry.time)).getTime();
+    const deliveryEndMs = deliveryStartMs + RENTAL_DROPOFF_PICKUP_MIN * 60000;
+    if (overlapsAny(deliveryStartMs, deliveryEndMs, busyIntervals)) {
+      return { ok: false, reason: 'ご指定の受け渡し日時は既にご予約が入っております。別の日時をお選びください。' };
+    }
+    blocks.push({
+      startMs: deliveryStartMs, endMs: deliveryEndMs,
+      summarySuffix: '（受け渡し）',
+      extendedProperties: { private: { surfType: 'rental', boardCount: String(boardCount), blockType: 'delivery' } },
+    });
+
+    // Collection: same day as delivery, or the last day of a multi-day
+    // rental — either way computed independently via pickCollectionTime(),
+    // which also accounts for the delivery block itself if it's the same day.
+    const busyForCollection = first === last
+      ? busyIntervals.concat([{ startMs: deliveryStartMs - INTER_BOOKING_BUFFER_MIN * 60000, endMs: deliveryEndMs + INTER_BOOKING_BUFFER_MIN * 60000 }])
+      : busyIntervals;
+    const collection = pickCollectionTime(last, busyForCollection);
+    if (!collection) {
+      return { ok: false, reason: `ご希望の返却日はすでにご予約でいっぱいです。別の日程をお選びいただくか、メール（${CONTACT_EMAIL}）にてご相談ください。` };
+    }
+    blocks.push({
+      startMs: collection.startMs, endMs: collection.endMs,
+      summarySuffix: '（返却）',
+      extendedProperties: { private: { surfType: 'rental', boardCount: String(boardCount), blockType: 'pickup' } },
+    });
+
+    // Per-day inventory events (unchanged concept — one per day the boards
+    // are out, used only for the 6-board cap, not for time-blocking).
+    // Re-check the cap here server-side (previously only enforced client-side).
+    const inventoryDates = [];
+    let cursor = first;
+    while (cursor <= last) {
+      inventoryDates.push(cursor);
+      cursor = addOneDay(cursor);
+    }
+    // NOTE: existing per-day board counts aren't re-derived here (that's
+    // surf-availability.js's job); this just guards against the obvious
+    // case of a request whose own quantity already exceeds the cap.
+    if (boardCount > 6) {
+      return { ok: false, reason: '在庫数の都合上、1回のご注文につき最大6枚までとなります。' };
+    }
+
+    return { ok: true, isRental: true, boardCount, inventoryDates, blocks };
+  }
+
+  // Non-rental: one block per requested date, all at the same time-of-day.
+  for (const date of allDates) {
+    const startMs = slotStartDate(date, minutesFromTimeStr(inquiry.time)).getTime();
+    const endMs = startMs + durationMin * 60000;
+    if (overlapsAny(startMs, endMs, busyIntervals)) {
+      return { ok: false, reason: `${date} ${inquiry.time} はご予約が重なっております。別の日時をお選びください。` };
+    }
+    blocks.push({
+      startMs, endMs, summarySuffix: '',
+      extendedProperties: { private: { surfType: 'guide' } },
+    });
+  }
+
+  return { ok: true, isRental: false, blocks };
+}
+
+async function createCalendarEvents(calendar, inquiry, ref, plan) {
   const secondaryLine = inquiry.secondaryFieldLabel
     ? `${inquiry.secondaryFieldLabel}: ${inquiry.secondaryFieldValueLabel || inquiry.pax || '—'}`
     : `人数: ${inquiry.pax || '—'}名`;
@@ -109,27 +352,35 @@ async function createCalendarEvents(inquiry, ref) {
     `質問・要望: ${inquiry.question || '—'}`,
   ].filter(Boolean).join('\n');
 
-  for (const date of inquiry.dates) {
-    const start = new Date(`${date}T${inquiry.time}:00${TZ_OFFSET}`);
-    const end = new Date(start.getTime() + 3 * 60 * 60000); // assume ~3hr session/pickup window
-
-    // Tagged so surf-availability.js can tell rental (inventory-counted)
-    // bookings apart from guide-led (whole-day-blocking) ones without
-    // having to parse the event title.
-    const extendedProperties = isRental
-      ? { private: { surfType: 'rental', boardCount: String(boardCount) } }
-      : { private: { surfType: 'guide' } };
-
+  for (const block of plan.blocks) {
     await calendar.events.insert({
-      calendarId: process.env.SURF_CALENDAR_ID,
+      calendarId: BOOKINGS_CALENDAR_ID,
       requestBody: {
-        summary: `${inquiry.activityLabel || 'サーフガイド'} — ${inquiry.name} (${ref})`,
+        summary: `${inquiry.activityLabel || 'サーフガイド'}${block.summarySuffix} — ${inquiry.name} (${ref})`,
         description,
-        start: { dateTime: start.toISOString() },
-        end: { dateTime: end.toISOString() },
-        extendedProperties,
+        start: { dateTime: new Date(block.startMs).toISOString() },
+        end: { dateTime: new Date(block.endMs).toISOString() },
+        extendedProperties: block.extendedProperties,
       },
     });
+  }
+
+  // Rental inventory-day events — kept separate from the delivery/pickup
+  // time-blocks above so surf-availability.js's board-count logic (which
+  // ignores anything with a blockType tag) stays simple.
+  if (plan.isRental) {
+    for (const date of plan.inventoryDates) {
+      await calendar.events.insert({
+        calendarId: BOOKINGS_CALENDAR_ID,
+        requestBody: {
+          summary: `レンタルサーフボード在庫 — ${inquiry.name} (${ref})`,
+          description,
+          start: { date },
+          end: { date: addOneDay(date) },
+          extendedProperties: { private: { surfType: 'rental', boardCount: String(plan.boardCount) } },
+        },
+      });
+    }
   }
 }
 
@@ -163,7 +414,7 @@ async function sendOwnerNotification(inquiry, ref) {
           <tr><td>電話</td><td>${inquiry.phone || '—'}</td></tr>
           <tr><td>ご質問・ご要望</td><td>${inquiry.question || '—'}</td></tr>
         </table>
-        <p>この予約希望日は Google カレンダー（Surf Guide）に自動登録されました。</p>
+        <p>この予約希望日は Google カレンダーに自動登録されました。</p>
       `,
     }),
   });
@@ -184,7 +435,21 @@ module.exports = async function handler(req, res) {
   const ref = makeRef();
 
   try {
-    await createCalendarEvents(inquiry, ref);
+    const auth = new google.auth.JWT(
+      process.env.GOOGLE_CLIENT_EMAIL,
+      null,
+      process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+      ['https://www.googleapis.com/auth/calendar']
+    );
+    const calendar = google.calendar({ version: 'v3', auth });
+
+    const plan = await buildPlan(calendar, inquiry);
+    if (!plan.ok) {
+      res.status(409).json({ error: plan.reason });
+      return;
+    }
+
+    await createCalendarEvents(calendar, inquiry, ref, plan);
     await sendOwnerNotification(inquiry, ref);
     res.status(200).json({ ref });
   } catch (err) {
