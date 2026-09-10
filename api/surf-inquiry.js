@@ -13,11 +13,12 @@
  *   3. Emails the owner (OWNER_EMAIL) a summary via Resend, same pattern
  *      as bookings.js uses for Transport.
  *
- * There is no confirm/charge step here (unlike Transport's bookings.js →
- * confirm.js flow, which is being rebuilt separately in Phase 2) — Surf
- * Guide is inquiry-based with no Stripe charge gating it yet. (The
- * standalone Stripe Payment Links for each activity are independent of
- * this endpoint.)
+ *   4. Signs a Phase 2 confirm/decline token (same shared design as
+ *      bookings.js's) and includes a review link in the owner email —
+ *      clicking it lets Ryu confirm (which, for the four priced
+ *      activities, auto-emails the customer the matching Stripe Payment
+ *      Link) or decline (frees the calendar hold) the inquiry. See
+ *      api/confirm.js for the full flow.
  *
  * ============================================================
  * PHASE 1 REWRITE — shared calendar, real time-blocks.
@@ -34,11 +35,39 @@
  *   GOOGLE_SERVER_MAPS_KEY   (rental delivery-radius check — already set
  *     for Transport's Custom Route pricing, reused here)
  *   RESEND_API_KEY, OWNER_EMAIL
+ *   BOOKING_TOKEN_SECRET, APP_URL   (Phase 2 — same as bookings.js, needed
+ *     to sign/link the confirm/decline token)
  */
+const crypto = require('crypto');
 const { google } = require('googleapis');
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const OWNER_EMAIL = process.env.OWNER_EMAIL;
+// Phase 2: same signing secret/URL as bookings.js — both feed the same
+// api/confirm.js endpoint. See that file's header comment for the full design.
+const BOOKING_TOKEN_SECRET = process.env.BOOKING_TOKEN_SECRET;
+const APP_URL = process.env.APP_URL;
+function signToken(payload) {
+  const json = JSON.stringify(payload);
+  const base = Buffer.from(json).toString('base64url');
+  const sig = crypto.createHmac('sha256', BOOKING_TOKEN_SECRET).update(base).digest('base64url');
+  return `${base}.${sig}`;
+}
+// サーフフォト／サーフィンビデオは時間制（¥5,000/時間）、それ以外は固定額 —
+// Payment Link 1本あたりの数量指示（confirm.js が客へのメールに書く「数量を◯に」）
+// を出すために、クライアントが送ってきた priceJpy 表示文字列は信用せず、
+// ここで独自に金額を計算しておく。半日/2セッションは pax に依存しない固定額。
+const SURF_PRICE_JPY = { half_day: 15000, two_session: 30000, photo: 5000, video: 5000 };
+function computeSurfPriceJpy(inquiry) {
+  const base = SURF_PRICE_JPY[inquiry.activity];
+  if (base === undefined) return null; // beginner_guide / rental_board — no fixed online price today
+  if (inquiry.activity === 'photo' || inquiry.activity === 'video') {
+    const mins = parseInt(inquiry.pax, 10);
+    if (!VALID_PHOTO_VIDEO_DURATIONS.includes(mins)) return null;
+    return Math.round(base * (mins / 60));
+  }
+  return base;
+}
 const TZ_OFFSET = '+10:00'; // see note in surf-availability.js re: NSW daylight saving
 // Customers are mostly calling from Japan — directing them to phone Ryu means an
 // expensive international call on their end, so every customer-facing "if this
@@ -335,6 +364,10 @@ async function buildPlan(calendar, inquiry) {
   return { ok: true, isRental: false, blocks };
 }
 
+// Returns every inserted event's ID — Phase 2's confirm/decline flow
+// (api/confirm.js) needs the full set (time-blocks AND, for rentals, the
+// inventory-day events) so a decline fully frees everything this inquiry
+// reserved, not just the customer-facing time slots.
 async function createCalendarEvents(calendar, inquiry, ref, plan) {
   const secondaryLine = inquiry.secondaryFieldLabel
     ? `${inquiry.secondaryFieldLabel}: ${inquiry.secondaryFieldValueLabel || inquiry.pax || '—'}`
@@ -352,8 +385,10 @@ async function createCalendarEvents(calendar, inquiry, ref, plan) {
     `質問・要望: ${inquiry.question || '—'}`,
   ].filter(Boolean).join('\n');
 
+  const eventIds = [];
+
   for (const block of plan.blocks) {
-    await calendar.events.insert({
+    const inserted = await calendar.events.insert({
       calendarId: BOOKINGS_CALENDAR_ID,
       requestBody: {
         summary: `${inquiry.activityLabel || 'サーフガイド'}${block.summarySuffix} — ${inquiry.name} (${ref})`,
@@ -363,6 +398,7 @@ async function createCalendarEvents(calendar, inquiry, ref, plan) {
         extendedProperties: block.extendedProperties,
       },
     });
+    eventIds.push(inserted.data.id);
   }
 
   // Rental inventory-day events — kept separate from the delivery/pickup
@@ -370,7 +406,7 @@ async function createCalendarEvents(calendar, inquiry, ref, plan) {
   // ignores anything with a blockType tag) stays simple.
   if (plan.isRental) {
     for (const date of plan.inventoryDates) {
-      await calendar.events.insert({
+      const inserted = await calendar.events.insert({
         calendarId: BOOKINGS_CALENDAR_ID,
         requestBody: {
           summary: `レンタルサーフボード在庫 — ${inquiry.name} (${ref})`,
@@ -380,11 +416,14 @@ async function createCalendarEvents(calendar, inquiry, ref, plan) {
           extendedProperties: { private: { surfType: 'rental', boardCount: String(plan.boardCount) } },
         },
       });
+      eventIds.push(inserted.data.id);
     }
   }
+
+  return eventIds;
 }
 
-async function sendOwnerNotification(inquiry, ref) {
+async function sendOwnerNotification(inquiry, ref, reviewUrl) {
   const dateList = inquiry.dates.join('、');
   await fetch('https://api.resend.com/emails', {
     method: 'POST',
@@ -415,6 +454,12 @@ async function sendOwnerNotification(inquiry, ref) {
           <tr><td>ご質問・ご要望</td><td>${inquiry.question || '—'}</td></tr>
         </table>
         <p>この予約希望日は Google カレンダーに自動登録されました。</p>
+        <div style="margin:24px 0;">
+          <a href="${reviewUrl}" style="display:inline-block;background:#16332F;color:#fff;padding:14px 28px;border-radius:999px;text-decoration:none;font-weight:600;">内容を確認する（確定 / お断り）</a>
+        </div>
+        <p style="color:#888;font-size:12px;">
+          上のボタンから内容をご確認のうえ、確定するか、お断りするかを選択してください。
+        </p>
       `,
     }),
   });
@@ -449,8 +494,29 @@ module.exports = async function handler(req, res) {
       return;
     }
 
-    await createCalendarEvents(calendar, inquiry, ref, plan);
-    await sendOwnerNotification(inquiry, ref);
+    const eventIds = await createCalendarEvents(calendar, inquiry, ref, plan);
+
+    // Phase 2: signed payload for api/confirm.js — same shape/secret as
+    // bookings.js's token, branched there by `service`. No paymentMethodId
+    // here (Surf Guide never collects a card); confirming instead looks up
+    // and emails one of Ryu's hand-made Stripe Payment Links, matched by
+    // `activity` (see PAYMENT_LINK_* env vars documented in confirm.js).
+    const token = signToken({
+      service: 'surf',
+      ref,
+      ts: Date.now(),
+      name: inquiry.name,
+      email: inquiry.email,
+      activity: inquiry.activity,
+      activityLabel: inquiry.activityLabel || '',
+      durationMin: (inquiry.activity === 'photo' || inquiry.activity === 'video') ? parseInt(inquiry.pax, 10) : null,
+      priceJpy: computeSurfPriceJpy(inquiry), // server-computed, independent of the client-supplied display string
+      dateTimeLabel: `${inquiry.dates.join('、')} ${inquiry.time || ''}`,
+      eventIds,
+    });
+    const reviewUrl = `${APP_URL}/api/confirm?token=${encodeURIComponent(token)}`;
+
+    await sendOwnerNotification(inquiry, ref, reviewUrl);
     res.status(200).json({ ref });
   } catch (err) {
     console.error(err);
