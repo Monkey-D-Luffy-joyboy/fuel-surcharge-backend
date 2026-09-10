@@ -60,6 +60,188 @@ function getFuelPriceOffset() {
   return Number.isNaN(parsed) ? DEFAULT_FUEL_PRICE_OFFSET : parsed;
 }
 
+/* ============================================================
+   PHASE 1 — shared calendar, real time-blocks.
+   ------------------------------------------------------------
+   Ryu is a solo operator: every booking, Transport or Surf Guide, draws on
+   the same person's time. Until now this endpoint had NO calendar
+   integration at all — a booking request just emailed Ryu, with nothing
+   stopping two conflicting jobs both being accepted. This adds: computing
+   how long each leg of a booking actually occupies him, checking that
+   against the SAME shared calendar surf-inquiry.js uses, and — if clear —
+   writing a real timed hold event so Surf Guide (and any other future
+   service) sees this time as taken too.
+
+   These constants/helpers are duplicated in api/surf-inquiry.js and
+   api/surf-availability.js rather than imported from a shared module — a
+   shared _lib file previously made Vercel fail with "Cannot find module"
+   at runtime in this project (see the pricing-logic comment above), so
+   duplication here is deliberate. If you change a number, change it in
+   all three files.
+
+   NOTE: the actual "confirm & charge" step (api/confirm.js) is a separate,
+   currently-broken piece of this system being rebuilt in Phase 2 — see
+   the note near the bottom of this file. This phase only adds the
+   calendar hold + conflict check; it doesn't touch payment.
+   ============================================================ */
+const { google } = require('googleapis');
+
+const BOOKINGS_CALENDAR_ID = process.env.BOOKINGS_CALENDAR_ID || process.env.SURF_CALENDAR_ID;
+const INTER_BOOKING_BUFFER_MIN = 30;
+const TZ_OFFSET = '+10:00'; // Byron Bay / NSW — doesn't account for daylight saving (AEDT, Oct-Apr); flagged, not fixed, to stay consistent with the rest of this codebase.
+// Each figure already bakes in the requested 1hr safety buffer for the
+// round trip — this is the full block, not just drive time.
+const ROUTE_DURATION_MIN = {
+  gc: 180,   // ゴールドコースト空港送迎
+  bne: 360,  // ブリスベン空港送迎
+};
+const CUSTOM_ROUTE_BUFFER_MIN = 60;
+// Customers are mostly calling from Japan — directing them to phone Ryu means an
+// expensive international call on their end, so every customer-facing "if this
+// doesn't work, contact us" message points here instead. Duplicated across files
+// per this project's convention; keep it identical everywhere if it ever changes.
+const CONTACT_EMAIL = 'bookings@jpgbyron.com';
+// Shown to the customer (and used by transport-availability.js, kept identical there)
+// when a Custom Route address can't be resolved to a live drive time. Ryu asked for this
+// to fail CLOSED rather than silently guessing a duration and pre-reserving his calendar
+// against it — a wrong guess could hold time he doesn't need, or under-hold time he does.
+const ADDRESS_UNRESOLVED_MESSAGE = `ご入力いただいた住所の位置を地図上で特定できませんでした。番地・建物名などを含む、より詳しいご住所でもう一度お試しください。ご不明な場合はメール（${CONTACT_EMAIL}）にてご連絡ください。`;
+
+// Separate from getDistanceKm() below on purpose — that function feeds the
+// live pricing calculation and is left untouched to avoid any risk of
+// changing a customer-facing price; this one is only used for scheduling.
+async function getDriveDurationMin(originAddress, destinationAddress) {
+  const apiKey = process.env.GOOGLE_SERVER_MAPS_KEY;
+  if (!apiKey || !originAddress || !destinationAddress) return null;
+  const [pointA, pointB] = [originAddress, destinationAddress].sort();
+  try {
+    const url = new URL('https://maps.googleapis.com/maps/api/distancematrix/json');
+    url.searchParams.set('origins', pointA);
+    url.searchParams.set('destinations', pointB);
+    url.searchParams.set('units', 'metric');
+    url.searchParams.set('key', apiKey);
+    const res = await fetch(url.toString());
+    const data = await res.json();
+    const element = data?.rows?.[0]?.elements?.[0];
+    if (data?.status === 'OK' && element?.status === 'OK' && element.duration?.value != null) {
+      return element.duration.value / 60; // seconds -> minutes
+    }
+    console.warn('Drive-duration lookup returned no usable result:', JSON.stringify(data));
+  } catch (e) {
+    console.warn('Drive-duration lookup failed:', e);
+  }
+  return null;
+}
+
+// Fixed routes (gc/bne) have no live lookup to fail, so this always succeeds for them.
+// 'custom' depends entirely on resolving both addresses to a real Google Maps drive
+// time — if that lookup can't return one, this now REJECTS the booking outright
+// (ok:false) instead of falling back to a flat-rate guess, per Ryu's explicit request.
+async function routeLegDurationMin(booking) {
+  if (booking.routeId === 'custom') {
+    const oneWayMin = await getDriveDurationMin(booking.fromCustomAddress, booking.toAddress);
+    if (oneWayMin === null) {
+      return { ok: false, reason: ADDRESS_UNRESOLVED_MESSAGE };
+    }
+    return { ok: true, durationMin: Math.round(oneWayMin * 2) + CUSTOM_ROUTE_BUFFER_MIN };
+  }
+  return { ok: true, durationMin: ROUTE_DURATION_MIN[booking.routeId] || ROUTE_DURATION_MIN.gc };
+}
+
+function overlapsAny(startMs, endMs, intervals) {
+  return intervals.some(iv => startMs < iv.endMs && endMs > iv.startMs);
+}
+
+// Identical logic to surf-inquiry.js / surf-availability.js (duplicated
+// per the note above) — every non-cancelled event in [rangeStart,
+// rangeEnd) from the shared calendar, padded by the inter-booking buffer.
+async function fetchPaddedBusyIntervals(calendar, rangeStart, rangeEnd) {
+  const events = [];
+  let pageToken;
+  do {
+    const resp = await calendar.events.list({
+      calendarId: BOOKINGS_CALENDAR_ID,
+      timeMin: rangeStart.toISOString(),
+      timeMax: rangeEnd.toISOString(),
+      singleEvents: true,
+      maxResults: 2500,
+      pageToken,
+    });
+    events.push(...(resp.data.items || []));
+    pageToken = resp.data.nextPageToken;
+  } while (pageToken);
+
+  const padMs = INTER_BOOKING_BUFFER_MIN * 60000;
+  const intervals = [];
+  for (const ev of events) {
+    if (ev.status === 'cancelled') continue;
+    let startMs, endMs;
+    if (ev.start.dateTime) {
+      startMs = new Date(ev.start.dateTime).getTime();
+      endMs = new Date(ev.end.dateTime).getTime();
+    } else if (ev.start.date) {
+      startMs = new Date(`${ev.start.date}T00:00:00${TZ_OFFSET}`).getTime();
+      endMs = new Date(`${ev.end.date}T00:00:00${TZ_OFFSET}`).getTime();
+    } else {
+      continue;
+    }
+    intervals.push({ startMs: startMs - padMs, endMs: endMs + padMs });
+  }
+  return intervals;
+}
+
+// Builds the outbound leg (always) and return leg (if requested), checks
+// both against the CURRENT shared calendar, and returns either
+// {ok:true, legs} or {ok:false, reason} — nothing is written to the
+// calendar until both legs (when there are two) are confirmed clear.
+async function buildTransportPlan(booking, durationMin) {
+  const auth = new google.auth.JWT(
+    process.env.GOOGLE_CLIENT_EMAIL,
+    null,
+    process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+    ['https://www.googleapis.com/auth/calendar']
+  );
+  const calendar = google.calendar({ version: 'v3', auth });
+
+  const legRequests = [{ date: booking.date, time: booking.time, label: 'outbound' }];
+  if (booking.returnEnabled && booking.returnDate && booking.returnTime) {
+    legRequests.push({ date: booking.returnDate, time: booking.returnTime, label: 'return' });
+  }
+
+  const dates = legRequests.map(l => l.date).sort();
+  const rangeStart = new Date(`${dates[0]}T00:00:00${TZ_OFFSET}`);
+  const rangeEnd = new Date(`${dates[dates.length - 1]}T23:59:59${TZ_OFFSET}`);
+  const busyIntervals = await fetchPaddedBusyIntervals(calendar, rangeStart, rangeEnd);
+
+  const legs = [];
+  for (const leg of legRequests) {
+    const startMs = new Date(`${leg.date}T${leg.time}:00${TZ_OFFSET}`).getTime();
+    const endMs = startMs + durationMin * 60000;
+    if (overlapsAny(startMs, endMs, busyIntervals)) {
+      return { ok: false, reason: `${leg.date} ${leg.time} はご予約が重なっております。別の日時をお選びください。` };
+    }
+    legs.push({ startMs, endMs, label: leg.label });
+  }
+
+  return { ok: true, calendar, legs };
+}
+
+async function createHoldEvents(calendar, booking, ref, legs) {
+  const summaryBase = `${booking.route || 'Transport'} — ${booking.name} (${ref})`;
+  for (const leg of legs) {
+    await calendar.events.insert({
+      calendarId: BOOKINGS_CALENDAR_ID,
+      requestBody: {
+        summary: leg.label === 'return' ? `${summaryBase} [Return]` : summaryBase,
+        description: `Transport booking ${ref} — ${booking.name} <${booking.email}>, ${booking.phone || 'no phone given'}.`,
+        start: { dateTime: new Date(leg.startMs).toISOString() },
+        end: { dateTime: new Date(leg.endMs).toISOString() },
+        extendedProperties: { private: { service: 'transport', routeId: booking.routeId || 'gc', leg: leg.label } },
+      },
+    });
+  }
+}
+
 async function getDistanceKm(originAddress, destinationAddress) {
   const apiKey = process.env.GOOGLE_SERVER_MAPS_KEY;
   if (!apiKey || !originAddress || !destinationAddress) return null;
@@ -181,10 +363,44 @@ module.exports = async function handler(req, res) {
     return res.status(400).json({ error: 'Missing required booking fields' });
   }
 
+  // Custom Route's whole schedule hold depends on resolving both addresses to a live
+  // drive time. Check this FIRST, before pricing or touching the calendar at all — an
+  // unresolved address means we reject with a "please clarify" message rather than
+  // pre-reserving Ryu's time against a guess (see routeLegDurationMin's comment).
+  const durationResult = await routeLegDurationMin(booking);
+  if (!durationResult.ok) {
+    return res.status(400).json({ error: durationResult.reason });
+  }
+  const durationMin = durationResult.durationMin;
+
   const { price, fuelInfo, distanceInfo } = await calcPrice(booking);
   const ref = 'REF-' + Math.floor(100000 + Math.random() * 900000);
-  const token = signToken({ ...booking, price, ref, ts: Date.now() });
-  const confirmUrl = `${APP_URL}/api/confirm?token=${encodeURIComponent(token)}`;
+
+  // Phase 1: hold the actual time this booking needs on the shared
+  // calendar, and reject outright if it conflicts with something already
+  // there (any service, not just Transport). This is new — previously
+  // nothing checked or blocked anything.
+  const plan = await buildTransportPlan(booking, durationMin);
+  if (!plan.ok) {
+    return res.status(409).json({ error: plan.reason });
+  }
+  try {
+    await createHoldEvents(plan.calendar, booking, ref, plan.legs);
+  } catch (e) {
+    console.error('Failed to write calendar hold:', e);
+    return res.status(500).json({ error: 'Could not reserve this time on the calendar. Please try again.' });
+  }
+
+  // NOTE (Phase 2, not yet built): api/confirm.js — the "予約を確定して決済する"
+  // step this email used to link to — is currently non-functional (it was
+  // accidentally left as a duplicate of quote.js, so it never charged
+  // anyone or sent a confirmation). Until that's rebuilt with a real Stripe
+  // flow, this email intentionally does NOT promise an automatic charge —
+  // the calendar hold above is what actually protects this time slot in
+  // the meantime; follow up with the customer manually to arrange payment.
+  // signToken/SECRET are kept (still computed below, just currently unused
+  // in the email) since Phase 2's confirm link will need the same signing.
+  void signToken({ ...booking, price, ref, ts: Date.now() });
 
   const emailBody = `
     <h2>New booking request — ${ref}</h2>
@@ -211,12 +427,11 @@ module.exports = async function handler(req, res) {
     <p style="color:#888;font-size:12px;">
       Distance calc — ${distanceInfo.wasCalculated ? `${distanceInfo.distanceKm}km (via Google Distance Matrix)` : `Could not calculate distance — assumed ${distanceInfo.distanceKm}km (flat rate). Check the address was specific enough, and that GOOGLE_SERVER_MAPS_KEY is set correctly.`}
     </p>` : ''}
-    <p>
-      <a href="${confirmUrl}" style="background:#16332F;color:#fff;padding:12px 22px;border-radius:24px;text-decoration:none;display:inline-block;">
-        予約を確定して決済する
-      </a>
+    <p style="color:#16332F;font-weight:bold;">この時間はカレンダーに仮予約として登録されました（他の予約とは重複しません）。</p>
+    <p style="color:#888;font-size:12px;">
+      決済のご案内はまだ自動化されていません — お客様に直接ご連絡のうえ、お支払い方法をご案内ください。
+      (Payment collection isn't automated yet — reach out to the customer directly to arrange it.)
     </p>
-    <p style="color:#888;font-size:12px;">このリンクをクリックすると、A$${price}の決済、カレンダー登録、お客様への確認メール送信が一度に行われます。</p>
   `;
 
   const emailRes = await fetch('https://api.resend.com/emails', {
