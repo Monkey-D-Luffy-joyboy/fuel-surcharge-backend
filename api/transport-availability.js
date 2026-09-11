@@ -62,7 +62,7 @@ const CUSTOM_ROUTE_BUFFER_MIN = 60;
 // expensive international call on their end, so every customer-facing "if this
 // doesn't work, contact us" message points here instead. Duplicated across files
 // per this project's convention (kept identical to bookings.js's copy).
-const CONTACT_EMAIL = 'bookings@jpgbyron.com';
+const CONTACT_EMAIL = 'jpgbyron@gmail.com'; // customer-facing contact point — bookings@jpgbyron.com is send-only (no working inbox behind it yet)
 const ADDRESS_UNRESOLVED_MESSAGE = `ご入力いただいた住所の位置を地図上で特定できませんでした。番地・建物名などを含む、より詳しいご住所でもう一度お試しください。ご不明な場合はメール（${CONTACT_EMAIL}）にてご連絡ください。`;
 
 function corsHeaders(res) {
