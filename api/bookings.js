@@ -100,7 +100,7 @@ const CUSTOM_ROUTE_BUFFER_MIN = 60;
 // expensive international call on their end, so every customer-facing "if this
 // doesn't work, contact us" message points here instead. Duplicated across files
 // per this project's convention; keep it identical everywhere if it ever changes.
-const CONTACT_EMAIL = 'bookings@jpgbyron.com';
+const CONTACT_EMAIL = 'jpgbyron@gmail.com'; // customer-facing contact point — bookings@jpgbyron.com is send-only (no working inbox behind it yet)
 // Shown to the customer (and used by transport-availability.js, kept identical there)
 // when a Custom Route address can't be resolved to a live drive time. Ryu asked for this
 // to fail CLOSED rather than silently guessing a duration and pre-reserving his calendar
