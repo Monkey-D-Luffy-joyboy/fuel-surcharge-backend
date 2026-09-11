@@ -65,7 +65,7 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const BOOKINGS_CALENDAR_ID = process.env.BOOKINGS_CALENDAR_ID || process.env.SURF_CALENDAR_ID;
 // Customers are mostly calling from Japan — see the identical note in
 // bookings.js/surf-inquiry.js/transport-availability.js.
-const CONTACT_EMAIL = 'bookings@jpgbyron.com';
+const CONTACT_EMAIL = 'jpgbyron@gmail.com'; // customer-facing contact point — bookings@jpgbyron.com is send-only (no working inbox behind it yet)
 
 const PAYMENT_LINKS = {
   half_day: process.env.PAYMENT_LINK_HALF_DAY,
