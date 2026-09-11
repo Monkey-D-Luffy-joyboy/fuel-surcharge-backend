@@ -58,6 +58,32 @@ function getFuelPriceOffset() {
   return Number.isNaN(parsed) ? DEFAULT_FUEL_PRICE_OFFSET : parsed;
 }
 
+// AUD -> JPY conversion, used only to show customers a headline JPY price (the actual
+// Stripe charge is always in AUD, computed above, and never derived from this number).
+// This MUST be fetched server-side: api.frankfurter.app does not send CORS headers, so a
+// browser calling it directly from the customer's page gets silently blocked — this was
+// found live on jpgbyron.com (Step 3 fell back to AUD-only for every customer) even though
+// it looked fine in local tests, since the test suite mocked that network call and never
+// exercised real browser CORS enforcement. A server-to-server call has no such restriction.
+const FALLBACK_AUD_JPY_RATE = 110; // ~market rate as of Sept 2026; update occasionally, or override via env var below
+async function getJpyRate() {
+  const override = process.env.FALLBACK_AUD_JPY_RATE;
+  const parsedOverride = override !== undefined ? parseFloat(override) : NaN;
+  const fallback = Number.isNaN(parsedOverride) ? FALLBACK_AUD_JPY_RATE : parsedOverride;
+
+  try {
+    const res = await fetch('https://api.frankfurter.app/latest?from=AUD&to=JPY');
+    if (!res.ok) throw new Error('Exchange rate request failed: ' + res.status);
+    const data = await res.json();
+    const rate = data?.rates?.JPY;
+    if (!rate) throw new Error('No JPY rate in response');
+    return rate;
+  } catch (e) {
+    console.warn('JPY exchange rate fetch failed, using fallback rate.', e);
+    return fallback;
+  }
+}
+
 async function getDistanceKm(originAddress, destinationAddress) {
   const apiKey = process.env.GOOGLE_SERVER_MAPS_KEY;
   if (!apiKey || !originAddress || !destinationAddress) return null;
@@ -169,12 +195,16 @@ module.exports = async function handler(req, res) {
   }
 
   try {
-    const result = await calcPrice({
-      routeId,
-      fromCustomAddress,
-      toAddress,
-      returnEnabled: returnEnabled === 'true',
-    });
+    const [result, jpyRate] = await Promise.all([
+      calcPrice({
+        routeId,
+        fromCustomAddress,
+        toAddress,
+        returnEnabled: returnEnabled === 'true',
+      }),
+      getJpyRate(),
+    ]);
+    result.priceJpy = Math.round(result.price * jpyRate);
     return res.status(200).json(result);
   } catch (e) {
     console.error('Estimate calculation failed:', e);
