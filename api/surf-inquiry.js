@@ -73,7 +73,7 @@ const TZ_OFFSET = '+10:00'; // see note in surf-availability.js re: NSW daylight
 // expensive international call on their end, so every customer-facing "if this
 // doesn't work, contact us" message points here instead. Duplicated across files
 // per this project's convention; keep it identical everywhere if it ever changes.
-const CONTACT_EMAIL = 'bookings@jpgbyron.com';
+const CONTACT_EMAIL = 'jpgbyron@gmail.com'; // customer-facing contact point — bookings@jpgbyron.com is send-only (no working inbox behind it yet)
 
 // ---- shared scheduling model (see surf-availability.js) ----
 const BOOKINGS_CALENDAR_ID = process.env.BOOKINGS_CALENDAR_ID || process.env.SURF_CALENDAR_ID;
