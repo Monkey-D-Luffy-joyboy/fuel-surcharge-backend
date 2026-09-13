@@ -58,6 +58,20 @@ const ROUTE_DURATION_MIN = {
 };
 const CUSTOM_ROUTE_BUFFER_MIN = 60;
 
+// Ryu works another job Sat/Sun/Mon and isn't flexible enough to take a booking for
+// "tomorrow" — he wants lead time to plan around. Customers must book at least this many
+// days ahead of today (today = day 0, tomorrow = day 1); the default of 2 blocks both
+// same-day and next-day requests. Override via the MIN_LEAD_TIME_DAYS env var (no
+// redeploy needed) if this ever needs to change. Duplicated in surf-availability.js,
+// bookings.js and surf-inquiry.js per this file's usual duplication convention — change
+// the default in all four if it changes.
+const DEFAULT_MIN_LEAD_TIME_DAYS = 2;
+function getMinLeadTimeDays() {
+  const raw = process.env.MIN_LEAD_TIME_DAYS;
+  const parsed = raw !== undefined ? parseInt(raw, 10) : NaN;
+  return Number.isNaN(parsed) ? DEFAULT_MIN_LEAD_TIME_DAYS : parsed;
+}
+
 // Customers are mostly calling from Japan — directing them to phone Ryu means an
 // expensive international call on their end, so every customer-facing "if this
 // doesn't work, contact us" message points here instead. Duplicated across files
@@ -229,6 +243,11 @@ module.exports = async function handler(req, res) {
     const rangeStart = new Date(`${startDateStr}T00:00:00${TZ_OFFSET}`);
     const rangeEnd = new Date(`${endDateStr}T23:59:59${TZ_OFFSET}`);
 
+    // Minimum lead-time buffer (see getMinLeadTimeDays above) — dates earlier than this
+    // are never bookable regardless of the calendar, so today/tomorrow show as blocked
+    // even before anything is actually on the calendar.
+    const earliestBookableDateStr = addDays(toDateOnly(today), getMinLeadTimeDays());
+
     const auth = new google.auth.JWT(
       process.env.GOOGLE_CLIENT_EMAIL,
       null,
@@ -244,6 +263,11 @@ module.exports = async function handler(req, res) {
     const slotsByDate = {};
     for (const dateStr of allDates) {
       if (new Date(`${dateStr}T23:59:59${TZ_OFFSET}`).getTime() < today.getTime()) continue;
+      // Inside the minimum lead-time buffer — never offered regardless of the calendar.
+      if (dateStr < earliestBookableDateStr) {
+        busyDates.push(dateStr);
+        continue;
+      }
       const slots = freeSlotsForDay(dateStr, durationMin, busyIntervals);
       if (slots.length === 0) {
         busyDates.push(dateStr);
