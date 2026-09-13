@@ -107,6 +107,41 @@ const CONTACT_EMAIL = 'jpgbyron@gmail.com'; // customer-facing contact point —
 // against it — a wrong guess could hold time he doesn't need, or under-hold time he does.
 const ADDRESS_UNRESOLVED_MESSAGE = `ご入力いただいた住所の位置を地図上で特定できませんでした。番地・建物名などを含む、より詳しいご住所でもう一度お試しください。ご不明な場合はメール（${CONTACT_EMAIL}）にてご連絡ください。`;
 
+// Ryu works another job Sat/Sun/Mon and isn't flexible enough to take a booking for
+// "tomorrow" — he wants lead time to plan around. Customers must book at least this many
+// days ahead of today (today = day 0, tomorrow = day 1); the default of 2 blocks both
+// same-day and next-day requests. Override via the MIN_LEAD_TIME_DAYS env var (no
+// redeploy needed) if this ever needs to change. Duplicated in surf-availability.js,
+// transport-availability.js and surf-inquiry.js per this file's usual duplication
+// convention — change the default in all four if it changes.
+//
+// This check is re-run here (not just shown as blocked in the availability calendar
+// grid) because that endpoint is only a display-layer courtesy — without this, someone
+// could submit a booking directly against a same-day/next-day date and it would go
+// through as long as nothing else was on the calendar yet.
+const DEFAULT_MIN_LEAD_TIME_DAYS = 2;
+function getMinLeadTimeDays() {
+  const raw = process.env.MIN_LEAD_TIME_DAYS;
+  const parsed = raw !== undefined ? parseInt(raw, 10) : NaN;
+  return Number.isNaN(parsed) ? DEFAULT_MIN_LEAD_TIME_DAYS : parsed;
+}
+function toDateOnly(d) {
+  return d.toISOString().slice(0, 10);
+}
+function addDays(dateStr, days) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const next = new Date(Date.UTC(y, m - 1, d) + days * 24 * 60 * 60000);
+  return `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, '0')}-${String(next.getUTCDate()).padStart(2, '0')}`;
+}
+// booking.date only — a return leg is always the same day or later, so if the outbound
+// leg clears the buffer the return leg necessarily does too.
+function violatesMinLeadTime(dateStr) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const earliestBookableDateStr = addDays(toDateOnly(today), getMinLeadTimeDays());
+  return dateStr < earliestBookableDateStr;
+}
+
 // Separate from getDistanceKm() below on purpose — that function feeds the
 // live pricing calculation and is left untouched to avoid any risk of
 // changing a customer-facing price; this one is only used for scheduling.
@@ -367,6 +402,13 @@ module.exports = async function handler(req, res) {
 
   if (!booking || !booking.name || !booking.email || !booking.date || !booking.time) {
     return res.status(400).json({ error: 'Missing required booking fields' });
+  }
+
+  // Fail closed on the minimum lead-time buffer (see violatesMinLeadTime above) before
+  // touching pricing or the calendar at all.
+  if (violatesMinLeadTime(booking.date)) {
+    const minLeadDays = getMinLeadTimeDays();
+    return res.status(400).json({ error: `恐れ入りますが、ご予約は${minLeadDays}日以上前までにお願いしております。別の日付をお選びください。` });
   }
 
   // Custom Route's whole schedule hold depends on resolving both addresses to a live
