@@ -86,6 +86,33 @@ const ACTIVITY_DURATION_MIN = {
 const VALID_PHOTO_VIDEO_DURATIONS = [60, 120, 180];
 const RENTAL_DROPOFF_PICKUP_MIN = 60;
 const RENTAL_SERVICE_RADIUS_KM = 20;
+
+// Ryu works another job Sat/Sun/Mon and isn't flexible enough to take a booking for
+// "tomorrow" — he wants lead time to plan around. Customers must book at least this many
+// days ahead of today (today = day 0, tomorrow = day 1); the default of 2 blocks both
+// same-day and next-day requests. Override via the MIN_LEAD_TIME_DAYS env var (no
+// redeploy needed) if this ever needs to change. Duplicated in surf-availability.js,
+// transport-availability.js and bookings.js per this file's usual duplication
+// convention — change the default in all four if it changes.
+//
+// Re-checked here (not just shown as blocked in the availability calendar grid) because
+// that endpoint is only a display-layer courtesy — without this, someone could submit an
+// inquiry directly against a same-day/next-day date and it would go through as long as
+// nothing else was on the calendar yet.
+const DEFAULT_MIN_LEAD_TIME_DAYS = 2;
+function getMinLeadTimeDays() {
+  const raw = process.env.MIN_LEAD_TIME_DAYS;
+  const parsed = raw !== undefined ? parseInt(raw, 10) : NaN;
+  return Number.isNaN(parsed) ? DEFAULT_MIN_LEAD_TIME_DAYS : parsed;
+}
+function toDateOnly(d) {
+  return d.toISOString().slice(0, 10);
+}
+function addDays(dateStr, days) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const next = new Date(Date.UTC(y, m - 1, d) + days * 24 * 60 * 60000);
+  return `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, '0')}-${String(next.getUTCDate()).padStart(2, '0')}`;
+}
 const RENTAL_BASE_ADDRESS = 'Byron Bay NSW, Australia';
 // Same-day rental: if pickup isn't possible at this default evening time
 // (or after it), the nearest earlier free slot that day is used instead —
@@ -474,6 +501,18 @@ module.exports = async function handler(req, res) {
 
   if (!inquiry || !inquiry.name || !inquiry.email || !Array.isArray(inquiry.dates) || inquiry.dates.length === 0 || !inquiry.time) {
     res.status(400).json({ error: 'Missing required fields' });
+    return;
+  }
+
+  // Fail closed on the minimum lead-time buffer (see getMinLeadTimeDays above) before
+  // touching the calendar at all — checked against every requested date, not just the
+  // first, since rental bookings can span a range.
+  const minLeadDays = getMinLeadTimeDays();
+  const leadCheckToday = new Date();
+  leadCheckToday.setHours(0, 0, 0, 0);
+  const earliestBookableDateStr = addDays(toDateOnly(leadCheckToday), minLeadDays);
+  if (inquiry.dates.some(d => d < earliestBookableDateStr)) {
+    res.status(400).json({ error: `恐れ入りますが、ご予約は${minLeadDays}日以上前までにお願いしております。別の日付をお選びください。` });
     return;
   }
 
