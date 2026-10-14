@@ -32,6 +32,8 @@
  *     or the card is simply declined) — that's surfaced clearly to Ryu
  *     rather than silently retried; the calendar hold is left in place
  *     either way so he can decide what to do next.
+ *   - 'tour' (from tour-inquiry.js): same as 'surf', using the
+ *     PAYMENT_LINK_WALKING / _EBIKE / _CAR links.
  *   - 'surf' (from surf-inquiry.js): confirming looks up the matching
  *     PAYMENT_LINK_<ACTIVITY> env var (one of Ryu's own hand-made Stripe
  *     Payment Links — this file never charges anything itself for Surf
@@ -56,6 +58,8 @@
  *   PAYMENT_LINK_HALF_DAY, PAYMENT_LINK_TWO_SESSION, PAYMENT_LINK_PHOTO,
  *     PAYMENT_LINK_VIDEO   (Surf Guide only, each optional — the full URL of
  *     the matching Stripe Payment Link you already created by hand)
+ *   PAYMENT_LINK_WALKING, PAYMENT_LINK_EBIKE, PAYMENT_LINK_CAR   (guided
+ *     tours from tour-inquiry.js, each optional, same idea)
  */
 const crypto = require('crypto');
 const { google } = require('googleapis');
@@ -72,6 +76,14 @@ const PAYMENT_LINKS = {
   two_session: process.env.PAYMENT_LINK_TWO_SESSION,
   photo: process.env.PAYMENT_LINK_PHOTO,
   video: process.env.PAYMENT_LINK_VIDEO,
+};
+
+// Guided tours (from tour-inquiry.js) — each optional, same idea as the surf
+// links above: the full URL of a Stripe Payment Link Ryu made by hand.
+const TOUR_PAYMENT_LINKS = {
+  walking: process.env.PAYMENT_LINK_WALKING,
+  ebike: process.env.PAYMENT_LINK_EBIKE,
+  car: process.env.PAYMENT_LINK_CAR,
 };
 
 function verifyToken(token) {
@@ -361,6 +373,33 @@ module.exports = async function handler(req, res) {
     res.status(200).send(resultPage('確定しました', link
       ? 'お客様にお支払いリンクを記載した確定メールを送信しました。'
       : 'お客様に確定メールを送信しました（このアクティビティにはお支払いリンクが設定されていないため、「追ってご連絡します」という内容のみ記載されています）。', true));
+    return;
+  }
+
+  if (payload.service === 'tour') {
+    const link = TOUR_PAYMENT_LINKS[payload.tour];
+    // E-bike is priced per person, so its Payment Link quantity should match pax.
+    const qtyNote = link && payload.tour === 'ebike' && payload.pax > 1
+      ? `<p style="color:#888;font-size:13px;">※お支払いページで数量を <strong>${Number(payload.pax)}</strong> に設定してください（${Number(payload.pax)}名様分）。</p>`
+      : '';
+    const customerHtml = `
+      <p>${escapeHtml(payload.name)} 様</p>
+      <p>${escapeHtml(payload.activityLabel || 'ツアー')}のご予約（${escapeHtml(payload.ref)}）が確定いたしました。</p>
+      <p>日時: ${escapeHtml(payload.dateTimeLabel || '—')}</p>
+      ${link
+        ? `<p>以下のリンクよりお支払いをお願いいたします。</p><p><a href="${link}">${link}</a></p>${qtyNote}`
+        : '<p>お支払い方法については追ってご連絡いたします。</p>'}
+      <p>ご不明点がございましたら ${CONTACT_EMAIL} までご連絡ください。</p>
+    `;
+    for (const id of eventIds) await tagEventStatus(calendar, id, 'confirmed');
+    try {
+      await sendCustomerEmail(payload.email, `ご予約確定のお知らせ — ${payload.ref}`, customerHtml);
+    } catch (e) {
+      console.error('Failed to send confirmation email:', e);
+    }
+    res.status(200).send(resultPage('確定しました', link
+      ? 'お客様にお支払いリンクを記載した確定メールを送信しました。'
+      : 'お客様に確定メールを送信しました（このツアーにはお支払いリンクが設定されていないため、「追ってご連絡します」という内容のみ記載されています）。', true));
     return;
   }
 
