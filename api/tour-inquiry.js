@@ -63,16 +63,13 @@ const TOURS = {
     durationMin: 360,
     maxPax: 4,
     pricing: null,
-    // The car tour has no fixed courses — the customer ticks the areas
-    // they're interested in and finalises the route with the guide.
-    areas: {
-      mullumbimby: 'マラムビンビー',
+    // The car tour's "course" is one area pair — the pairs are far apart,
+    // so a customer picks one and finalises the exact stops with the guide.
+    courses: {
+      mullumbimby_brunswick: 'マラムビンビー・ブランズウィックヘッズ',
+      lennox_ballina: 'レノックスヘッド・バリーナ',
+      broken_head_bangalow: 'ブロークンヘッド・バンガロー',
       crystal_castle: 'クリスタルキャッスル',
-      ballina: 'バリーナ',
-      brunswick_heads: 'ブランズウィックヘッズ',
-      lennox_head: 'レノックスヘッド',
-      bangalow: 'バンガロー',
-      broken_head: 'ブロークンヘッド',
     },
   },
 };
@@ -188,12 +185,12 @@ function normaliseInquiry(body) {
   const date = clean(body.date, 10);
   const time = clean(body.time, 5);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) {
-    return { ok: false, status: 400, error: '日付と開始時間をお選びください。' };
+    return { ok: false, status: 400, error: '日付と集合時間をお選びください。' };
   }
   const [hh, mm] = time.split(':').map(Number);
   const startMin = hh * 60 + mm;
   if (mm % 30 !== 0 || startMin < DAY_START_MIN || startMin + tour.durationMin > DAY_END_MIN) {
-    return { ok: false, status: 400, error: 'ご指定の開始時間はお選びいただけません。' };
+    return { ok: false, status: 400, error: 'ご指定の集合時間はお選びいただけません。' };
   }
 
   const pax = parseInt(body.pax, 10);
@@ -201,17 +198,11 @@ function normaliseInquiry(body) {
     return { ok: false, status: 400, error: `人数は1〜${tour.maxPax}名でお選びください。` };
   }
 
-  let course = null;
-  let courseLabel = '';
-  let areas = [];
-  if (tour.courses) {
-    course = body.course;
-    if (!tour.courses[course]) return { ok: false, status: 400, error: 'コースをお選びください。' };
-    courseLabel = tour.courses[course];
-  } else {
-    areas = Array.isArray(body.areas) ? [...new Set(body.areas.filter(a => tour.areas[a]))] : [];
-    courseLabel = areas.length ? areas.map(a => tour.areas[a]).join('・') : 'ガイドと相談して決める';
+  const course = body.course;
+  if (!tour.courses[course]) {
+    return { ok: false, status: 400, error: tourKey === 'car' ? 'エリアをお選びください。' : 'コースをお選びください。' };
   }
+  const courseLabel = tour.courses[course];
 
   const meetingPlace = clean(body.meetingPlace, 300);
   if (tourKey === 'car' && !meetingPlace) {
@@ -225,7 +216,6 @@ function normaliseInquiry(body) {
       tour,
       tourLabel: tour.label,
       course,
-      areas,
       courseLabel,
       pax,
       date,
@@ -253,10 +243,10 @@ function detailRows(inq, ref) {
   return [
     ['参照番号', ref],
     ['ツアー', inq.tourLabel],
-    [inq.tour.courses ? 'コース' : '希望エリア', inq.courseLabel],
+    [inq.tourKey === 'car' ? 'エリア' : 'コース', inq.courseLabel],
     ['人数', `${inq.pax}名`],
     ['希望日', inq.date],
-    ['開始時間', `${inq.time}（約${inq.tour.durationMin / 60}時間）`],
+    ['集合時間', `${inq.time}（約${inq.tour.durationMin / 60}時間）`],
     ['目安料金', priceText(inq)],
     [inq.tourKey === 'car' ? 'お迎え先' : '待ち合わせ希望', inq.meetingPlace || '—'],
     ['ガイド言語', inq.language],
