@@ -258,6 +258,9 @@
     if (n === 2) loadAvailability();
     if (n === 3) renderStep3();
     try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (e) {}
+    // Inside a Framer Embed the form sits in a fixed-height frame, so also
+    // scroll the host page back to the top of the form.
+    try { if (window.frameElement) window.frameElement.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) {}
   }
   document.querySelectorAll('[data-back]').forEach(function (b) { b.onclick = function () { go(+b.getAttribute('data-back')); }; });
   function showErr(id, msg) { var e = $(id); e.textContent = msg || ''; e.classList.toggle('show', !!msg); }
