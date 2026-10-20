@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>バイロンベイ ガイドツアー</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@400;600&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #FBF6EE;
+    --card: #FFFFFF;
+    --ink: #1D2621;
+    --muted: #5B655F;
+    --line: #DCD1BC;
+    --soft: #F1E8D8;
+    --field: #F7F1E6;
+    --green: #16332F;
+    --accent: #E0623A;
+    --accent-soft: #FBE7E0;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'Noto Sans JP', -apple-system, 'Hiragino Sans', sans-serif; -webkit-font-smoothing: antialiased; }
+  .wrap { max-width: 560px; margin: 0 auto; padding: 32px 16px 48px; }
+  .brand { font-family: 'Shippori Mincho', serif; font-size: 20px; letter-spacing: .04em; margin: 0; }
+  .brand-sub { font-size: 11px; color: var(--muted); margin: 4px 0 18px; }
+  .progress { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 28px; }
+  .progress span { height: 2px; background: var(--line); border-radius: 2px; transition: background .3s; }
+  .progress span.on { background: var(--green); }
+  .step-label { font-size: 10px; letter-spacing: .12em; color: var(--muted); }
+  .step-num { font-family: 'Shippori Mincho', serif; font-size: 44px; line-height: 1; margin: 4px 0 6px; color: var(--green); }
+  .step-title { font-family: 'Shippori Mincho', serif; font-size: 19px; margin: 0 0 20px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px; margin-bottom: 14px; }
+  .card h3 { font-size: 13px; font-weight: 700; margin: 0 0 12px; }
+  .hint { font-size: 12px; color: var(--muted); margin: 6px 0 0; line-height: 1.6; }
+  .options { display: grid; gap: 10px; }
+  .option { display: flex; gap: 12px; align-items: flex-start; padding: 14px; border: 1.5px solid var(--line); border-radius: 12px; cursor: pointer; background: var(--field); transition: border-color .2s, background .2s; }
+  .option:hover { border-color: #bfb093; }
+  .option input { margin-top: 3px; accent-color: var(--green); }
+  .option.selected { border-color: var(--green); background: #EFF5F1; }
+  .option .t { font-size: 14px; font-weight: 700; }
+  .option .d { font-size: 12px; color: var(--muted); margin-top: 3px; line-height: 1.55; }
+  .areas { grid-template-columns: 1fr 1fr; }
+  .areas .option { padding: 11px 12px; align-items: center; }
+  .stepper { display: flex; align-items: center; justify-content: space-between; }
+  .stepper .ctrl { display: flex; align-items: center; gap: 14px; }
+  .stepper button { width: 34px; height: 34px; border-radius: 50%; border: 1.5px solid var(--line); background: #fff; font-size: 18px; cursor: pointer; color: var(--ink); }
+  .stepper button:disabled { opacity: .35; cursor: default; }
+  .stepper .v { font-size: 18px; font-weight: 700; min-width: 20px; text-align: center; }
+  .price { display: flex; justify-content: space-between; align-items: baseline; background: var(--soft); border-radius: 12px; padding: 14px 16px; margin-bottom: 14px; }
+  .price .l { font-size: 12px; color: var(--muted); }
+  .price .v { font-size: 18px; font-weight: 700; color: #8A4B1F; }
+  /* calendar */
+  .cal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .cal-head b { font-size: 13px; }
+  .cal-head button { width: 28px; height: 28px; border-radius: 8px; border: 1px solid var(--line); background: #fff; cursor: pointer; }
+  .cal-head button:disabled { opacity: .3; cursor: default; }
+  .cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; text-align: center; }
+  .cal .dow { font-size: 10px; color: var(--muted); padding: 4px 0; }
+  .cal button { aspect-ratio: 1; width: 100%; max-width: 40px; margin: 0 auto; border: none; background: transparent; border-radius: 50%; font-size: 13px; cursor: pointer; color: var(--ink); font-family: inherit; }
+  .cal button:hover:not(:disabled) { background: var(--soft); }
+  .cal button:disabled { color: #C9C2B4; cursor: default; }
+  .cal button.sel { background: var(--green); color: #fff; }
+  .slots { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .slots button { padding: 9px 0; border: 1.5px solid var(--line); border-radius: 999px; background: #fff; font-size: 13px; cursor: pointer; font-family: inherit; color: var(--ink); }
+  .slots button.sel { background: var(--green); border-color: var(--green); color: #fff; }
+  /* fields */
+  label.f { display: block; font-size: 12px; font-weight: 500; margin: 0 0 6px; }
+  label.f .req { color: var(--accent); margin-left: 4px; }
+  input[type=text], input[type=email], input[type=tel], textarea { width: 100%; padding: 12px 14px; font-size: 14px; border: 1px solid var(--line); background: var(--field); border-radius: 10px; font-family: inherit; color: var(--ink); }
+  input:focus, textarea:focus { outline: 2px solid #9DB8AA; outline-offset: 0; border-color: transparent; }
+  textarea { min-height: 96px; resize: vertical; }
+  .field { margin-bottom: 14px; }
+  .seg { display: flex; gap: 8px; }
+  .seg button { flex: 1; padding: 10px; border: 1.5px solid var(--line); border-radius: 999px; background: #fff; font-family: inherit; font-size: 13px; cursor: pointer; color: var(--ink); }
+  .seg button.sel { background: var(--green); border-color: var(--green); color: #fff; }
+  .summary { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .summary td { padding: 7px 0; border-bottom: 1px solid var(--soft); vertical-align: top; }
+  .summary td:first-child { color: var(--muted); width: 36%; }
+  .error { background: var(--accent-soft); color: #A8401F; font-size: 13px; padding: 12px 14px; border-radius: 10px; margin-bottom: 14px; display: none; line-height: 1.6; }
+  .error.show { display: block; }
+  .nav { display: flex; gap: 10px; margin-top: 20px; }
+  .btn { flex: 1; padding: 15px; border-radius: 999px; font-size: 14px; font-weight: 700; cursor: pointer; font-family: inherit; border: none; }
+  .btn-primary { background: var(--green); color: #fff; }
+  .btn-primary:disabled { opacity: .4; cursor: default; }
+  .btn-ghost { background: transparent; color: var(--ink); border: 1.5px solid var(--line); flex: 0 0 30%; }
+  .step { display: none; }
+  .step.on { display: block; animation: fade .3s ease; }
+  @keyframes fade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  .done { text-align: center; padding: 30px 10px; }
+  .done .ref { display: inline-block; margin: 14px 0; padding: 8px 18px; border-radius: 999px; background: var(--soft); font-weight: 700; letter-spacing: .06em; }
+  .done p { font-size: 14px; line-height: 1.8; color: var(--muted); }
+  .loading { font-size: 12px; color: var(--muted); padding: 8px 0; }
+  @media (max-width: 420px) { .areas { grid-template-columns: 1fr; } .slots { grid-template-columns: repeat(3, 1fr); } }
+</style>
+<style>
+  .tours { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .tour { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px; padding: 16px 10px; border: 1.5px solid var(--line); border-radius: 12px; background: var(--field); cursor: pointer; font-family: inherit; color: var(--ink); transition: border-color .2s, background .2s; }
+  .tour:hover { border-color: #bfb093; }
+  .tour.selected { border-color: var(--green); background: #EFF5F1; }
+  .tour svg { width: 26px; height: 26px; stroke: var(--green); fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .tour .t { font-size: 13px; font-weight: 700; word-break: keep-all; overflow-wrap: anywhere; }
+  .tour .d { font-size: 11px; color: var(--muted); line-height: 1.5; }
+  #choiceCard, #paxCard, #priceBox { display: none; }
+  @media (max-width: 420px) { .tours { grid-template-columns: 1fr; } .tour { flex-direction: row; text-align: left; padding: 12px 14px; } .tour .txt { flex: 1; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="brand">バイロンベイ ガイドツアー</p>
+  <p class="brand-sub">街歩き・E-バイク・車で巡るツアーのご予約・お問い合わせ</p>
+  <div class="progress"><span class="on"></span><span></span><span></span></div>
+
+  <!-- STEP 1 -->
+  <section class="step on" data-step="1">
+    <div class="step-label">STEP 1 / 3</div>
+    <div class="step-num">01</div>
+    <h2 class="step-title">ツアー・コース・人数</h2>
+    <div class="card">
+      <h3>ツアーを選択</h3>
+      <div class="tours" id="tours"></div>
+    </div>
+    <div class="card" id="choiceCard">
+      <h3 id="choiceTitle"></h3>
+      <div class="options" id="choices"></div>
+      <p class="hint" id="choiceHint"></p>
+    </div>
+    <div class="card stepper" id="paxCard">
+      <div><h3 style="margin:0">人数</h3><p class="hint" id="paxHint"></p></div>
+      <div class="ctrl"><button type="button" id="paxMinus" aria-label="減らす">−</button><span class="v" id="paxV">1</span><button type="button" id="paxPlus" aria-label="増やす">＋</button></div>
+    </div>
+    <div class="price" id="priceBox"><span class="l">目安料金</span><span class="v" id="priceV"></span></div>
+    <div class="error" id="err1"></div>
+    <div class="nav"><button class="btn btn-primary" type="button" id="next1">日時を選ぶ</button></div>
+  </section>
+
+  <!-- STEP 2 -->
+  <section class="step" data-step="2">
+    <div class="step-label">STEP 2 / 3</div>
+    <div class="step-num">02</div>
+    <h2 class="step-title">ご希望日・集合時間</h2>
+    <div class="card">
+      <div class="cal-head"><button type="button" id="prevM" aria-label="前の月">‹</button><b id="monthLabel"></b><button type="button" id="nextM" aria-label="次の月">›</button></div>
+      <div class="cal" id="cal"></div>
+      <p class="loading" id="calLoading">空き状況を確認しています…</p>
+      <p class="hint">ご予約は2日前までにお願いしております。グレーの日は満席またはご予約いただけない日です。</p>
+    </div>
+    <div class="card" id="slotCard" style="display:none">
+      <h3>集合時間</h3>
+      <div class="slots" id="slots"></div>
+    </div>
+    <div class="error" id="err2"></div>
+    <div class="nav"><button class="btn btn-ghost" type="button" data-back="1">戻る</button><button class="btn btn-primary" type="button" id="next2" disabled>お客様情報へ</button></div>
+  </section>
+
+  <!-- STEP 3 -->
+  <section class="step" data-step="3">
+    <div class="step-label">STEP 3 / 3</div>
+    <div class="step-num">03</div>
+    <h2 class="step-title">お客様情報・ご要望</h2>
+    <div class="card">
+      <div class="field"><label class="f" for="name">お名前<span class="req">*</span></label><input type="text" id="name" autocomplete="name" placeholder="山田 花子" /></div>
+      <div class="field"><label class="f" for="email">メールアドレス<span class="req">*</span></label><input type="email" id="email" autocomplete="email" placeholder="example@mail.com" /></div>
+      <div class="field"><label class="f" for="phone">電話番号（任意）</label><input type="tel" id="phone" autocomplete="tel" placeholder="+81 90 1234 5678" /></div>
+      <div class="field"><label class="f" for="meeting" id="meetingLabel"></label><input type="text" id="meeting" /></div>
+      <div class="field"><label class="f">ガイドの言語</label><div class="seg" id="lang"><button type="button" class="sel" data-v="ja">日本語</button><button type="button" data-v="en">英語</button></div></div>
+      <div class="field" style="margin-bottom:0"><label class="f" for="question">ご質問・ご要望（任意）</label><textarea id="question" placeholder="お子様連れ、苦手な食べ物、行ってみたい場所など、お気軽にお書きください。"></textarea></div>
+    </div>
+    <div class="card">
+      <h3>ご予約内容</h3>
+      <table class="summary" id="summary"></table>
+      <p class="hint">送信後、ガイドが内容を確認し、メールで確定のご連絡とお支払い方法をご案内いたします。この時点ではお支払いは発生しません。</p>
+    </div>
+    <div class="error" id="err3"></div>
+    <div class="nav"><button class="btn btn-ghost" type="button" data-back="2">戻る</button><button class="btn btn-primary" type="button" id="submit">この内容で送信する</button></div>
+  </section>
+
+  <!-- DONE -->
+  <section class="step" data-step="4">
+    <div class="done">
+      <div class="step-num">Thank you</div>
+      <h2 class="step-title" style="margin-top:14px">お問い合わせを受け付けました</h2>
+      <div class="ref" id="refV"></div>
+      <p>ご入力いただいたメールアドレス宛に、ガイドより確定のご連絡をお送りします。<br>数日以内に連絡がない場合は <a href="mailto:jpgbyron@gmail.com">jpgbyron@gmail.com</a> までお知らせください。</p>
+    </div>
+  </section>
+</div>
+
+<script>
+(function () {
+  var API = 'https://fuel-surcharge-backend.vercel.app/api';
+  var ICONS = {
+    walking: '<svg viewBox="0 0 24 24"><circle cx="13" cy="4" r="2"/><path d="M9 21l3-7 3 3v4M12 14l-1-5 3-1 3 3 2 1M11 9l-3 2-1 3"/></svg>',
+    ebike: '<svg viewBox="0 0 24 24"><circle cx="5.5" cy="17" r="3.5"/><circle cx="18.5" cy="17" r="3.5"/><path d="M5.5 17l4-7h6l3 7M9.5 10L8 7H6M15.5 10l-3 7"/></svg>',
+    car: '<svg viewBox="0 0 24 24"><path d="M3 16v-4l2-5h14l2 5v4H3z"/><circle cx="7" cy="16.5" r="1.8"/><circle cx="17" cy="16.5" r="1.8"/><path d="M3 12h18"/></svg>'
+  };
+  // Keep in sync with TOURS in api/tour-inquiry.js
+  var TOURS = {
+    walking: { label: '街歩きツアー', durationMin: 120, maxPax: 4, pricing: { type: 'group', jpy: 11200 },
+      summary: '2時間・1グループ¥11,200',
+      choiceTitle: 'コースを選択',
+      choices: {
+        history: { label: '歴史・雑学コース', desc: 'バイロンベイの成り立ちや灯台にまつわる逸話を、地元人のあるある雑学を交えながらご案内します。' },
+        market: { label: 'マーケット探訪コース', desc: '地元で人気のマーケットを中心に、食事やハンドメイドの雑貨、地元アーティストの作品をガイドと巡ります。' },
+        cafe: { label: 'カフェ・ショッピングコース', desc: 'おしゃれなカフェやセレクトショップ、ファッション、ジュエリーなど、バイロンベイらしいお買い物を楽しむコースです。' }
+      },
+      meetingLabel: '待ち合わせ希望場所', meetingRequired: false, meetingPlaceholder: 'ホテル名、またはタウンセンターなど' },
+    ebike: { label: 'E-バイクツアー', durationMin: 240, maxPax: 4, pricing: { type: 'per_person', jpy: 20000 },
+      summary: '4時間・1名¥20,000',
+      choiceTitle: 'コースを選択',
+      choiceHint: '料金は1名あたり¥20,000（4時間のE-バイクレンタルとガイド付き）です。',
+      choices: {
+        sunrise: { label: 'サンライズコース', desc: 'アパレルブランドやカフェが集まるサンライズビーチエリアを効率よく回り、バイロンベイのコアなスポットをチェックします。' },
+        lighthouse: { label: 'ライトハウスコース', desc: 'バイロンベイ随一の景色を誇るライトハウスへ。ワテゴス＆タローズビーチなど有名ビーチも合わせてご案内します。' }
+      },
+      meetingLabel: '待ち合わせ希望場所', meetingRequired: false, meetingPlaceholder: 'ホテル名、またはタウンセンターなど' },
+    car: { label: '車で巡るバイロンベイ', durationMin: 360, maxPax: 4, pricing: null,
+      summary: '6時間・バイロン近郊へ',
+      choiceTitle: '気になるエリア',
+      choiceHint: 'エリア内の詳しい行き先は、当日ガイドとご相談のうえ決定します。',
+      choices: {
+        mullumbimby_brunswick: { label: 'マラムビンビー・ブランズウィックヘッズ', desc: 'のどかな牧場の町と、リバーサイドの静かなビーチタウン。' },
+        lennox_ballina: { label: 'レノックスヘッド・バリーナ', desc: '断崖とサーフスポットの町、エビ漁と川沿いの景色が楽しめる港町。' },
+        broken_head_bangalow: { label: 'ブロークンヘッド・バンガロー', desc: '自然と動物たちに囲まれたナショナルパークと、アートとクラフトの町並み。' },
+        crystal_castle: { label: 'クリスタルキャッスル', desc: '庭園とパワースポットが有名な、癒しのスポット。' }
+      },
+      meetingLabel: 'お迎え先（ホテル名・住所）', meetingRequired: true, meetingPlaceholder: '例：Byron Bay Beach Hotel' }
+  };
+  var DAYS = ['日', '月', '火', '水', '木', '金', '土'];
+
+  var state = { tour: null, choice: null, pax: 1, date: null, time: null, lang: 'ja' };
+  var availCache = {}; // tourKey -> { slots } | 'failed'
+
+  function $(id) { return document.getElementById(id); }
+  function T() { return TOURS[state.tour]; }
+  function yen(n) { return '¥' + n.toLocaleString('ja-JP'); }
+  function pad(n) { return String(n).padStart(2, '0'); }
+  function iso(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+  function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+
+  // Optional pre-selection from the page URL, e.g. /appointment-tour?tour=ebike&course=sunrise
+  function preselect() {
+    var q = '';
+    try { q = window.top.location.search; } catch (e) {}
+    if (!q) { try { q = window.location.search; } catch (e) {} }
+    var t = /[?&]tour=([a-z_]+)/.exec(q || ''), c = /[?&]course=([a-z_]+)/.exec(q || '');
+    if (t && TOURS[t[1]]) {
+      state.tour = t[1];
+      if (c && TOURS[t[1]].choices[c[1]]) state.choice = c[1];
+    }
+  }
+
+  // ---------- navigation ----------
+  function go(n) {
+    document.querySelectorAll('.step').forEach(function (s) { s.classList.toggle('on', s.getAttribute('data-step') == n); });
+    document.querySelectorAll('.progress span').forEach(function (s, i) { s.classList.toggle('on', i < Math.min(n, 3)); });
+    if (n === 2) loadAvailability();
+    if (n === 3) renderStep3();
+    try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (e) {}
+  }
+  document.querySelectorAll('[data-back]').forEach(function (b) { b.onclick = function () { go(+b.getAttribute('data-back')); }; });
+  function showErr(id, msg) { var e = $(id); e.textContent = msg || ''; e.classList.toggle('show', !!msg); }
+
+  // ---------- step 1 ----------
+  function renderTours() {
+    $('tours').innerHTML = Object.keys(TOURS).map(function (k) {
+      var t = TOURS[k];
+      return '<button type="button" class="tour' + (state.tour === k ? ' selected' : '') + '" data-k="' + k + '">' + ICONS[k] +
+        '<span class="txt"><div class="t">' + esc(t.label) + '</div><div class="d">' + esc(t.summary) + '</div></span></button>';
+    }).join('');
+    $('tours').querySelectorAll('.tour').forEach(function (b) {
+      b.onclick = function () {
+        var k = b.getAttribute('data-k');
+        if (state.tour !== k) {
+          state.tour = k; state.choice = null; state.date = null; state.time = null;
+          state.pax = Math.min(state.pax, TOURS[k].maxPax);
+        }
+        showErr('err1');
+        renderStep1();
+      };
+    });
+  }
+  function renderChoices() {
+    var t = T();
+    $('choiceTitle').textContent = t.choiceTitle;
+    $('choiceHint').textContent = t.choiceHint || '';
+    $('choices').innerHTML = Object.keys(t.choices).map(function (k) {
+      var c = t.choices[k], on = state.choice === k;
+      return '<label class="option' + (on ? ' selected' : '') + '"><input type="radio" name="choice" value="' + k + '"' + (on ? ' checked' : '') + ' /><div><div class="t">' + esc(c.label) + '</div><div class="d">' + esc(c.desc) + '</div></div></label>';
+    }).join('');
+    $('choices').querySelectorAll('input').forEach(function (inp) {
+      inp.onchange = function () { state.choice = inp.value; showErr('err1'); renderChoices(); };
+    });
+  }
+  function priceText() {
+    var t = T();
+    if (!t.pricing) return 'ご相談のうえご案内';
+    if (t.pricing.type === 'per_person') return yen(t.pricing.jpy * state.pax) + '（' + state.pax + '名）';
+    return yen(t.pricing.jpy) + '（1グループ）';
+  }
+  function renderPax() {
+    var t = T();
+    $('paxV').textContent = state.pax;
+    $('paxMinus').disabled = state.pax <= 1;
+    $('paxPlus').disabled = state.pax >= t.maxPax;
+    $('paxHint').textContent = '1〜' + t.maxPax + '名まで';
+    $('priceV').textContent = priceText();
+  }
+  function renderStep1() {
+    renderTours();
+    var on = !!state.tour;
+    $('choiceCard').style.display = on ? 'block' : 'none';
+    $('paxCard').style.display = on ? 'flex' : 'none';
+    $('priceBox').style.display = on ? 'flex' : 'none';
+    if (on) { renderChoices(); renderPax(); }
+  }
+  $('paxMinus').onclick = function () { if (state.pax > 1) { state.pax--; renderPax(); } };
+  $('paxPlus').onclick = function () { if (state.pax < T().maxPax) { state.pax++; renderPax(); } };
+  $('next1').onclick = function () {
+    if (!state.tour) { showErr('err1', 'ツアーをお選びください。'); return; }
+    if (!state.choice) { showErr('err1', T().choiceTitle.replace('を選択', '') + 'をお選びください。'); return; }
+    go(2);
+  };
+
+  // ---------- step 2 ----------
+  var today = new Date(); today.setHours(0, 0, 0, 0);
+  var thisMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+  var viewMonth = thisMonth;
+  var maxMonth = new Date(today.getFullYear(), today.getMonth() + 6, 1);
+  var earliest = iso(new Date(today.getFullYear(), today.getMonth(), today.getDate() + 2));
+
+  function defaultSlots() {
+    var out = [];
+    for (var m = 7 * 60; m + T().durationMin <= 19 * 60; m += 30) out.push(pad(Math.floor(m / 60)) + ':' + pad(m % 60));
+    return out;
+  }
+  function slotsFor(dateStr) {
+    var a = availCache[state.tour];
+    if (a === 'failed') return dateStr >= earliest ? defaultSlots() : [];
+    if (!a) return [];
+    return a.slots[dateStr] || [];
+  }
+  function loadAvailability() {
+    var key = state.tour;
+    if (availCache[key]) { renderCal(); return; }
+    $('calLoading').style.display = 'block';
+    renderCal();
+    var endD = new Date(today); endD.setDate(endD.getDate() + 185);
+    fetch(API + '/tour-availability?tour=' + key + '&start=' + iso(today) + '&end=' + iso(endD))
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function (d) { availCache[key] = { slots: d.slotsByDate || {} }; })
+      .catch(function () { availCache[key] = 'failed'; }) // fail open — the server re-checks on submit
+      .then(function () { $('calLoading').style.display = 'none'; if (state.tour === key) renderCal(); });
+  }
+  function renderCal() {
+    $('monthLabel').textContent = viewMonth.getFullYear() + '年 ' + (viewMonth.getMonth() + 1) + '月';
+    $('prevM').disabled = viewMonth <= thisMonth;
+    $('nextM').disabled = viewMonth >= maxMonth;
+    var html = DAYS.map(function (d) { return '<div class="dow">' + d + '</div>'; }).join('');
+    for (var i = 0; i < viewMonth.getDay(); i++) html += '<div></div>';
+    var days = new Date(viewMonth.getFullYear(), viewMonth.getMonth() + 1, 0).getDate();
+    for (var d = 1; d <= days; d++) {
+      var ds = iso(new Date(viewMonth.getFullYear(), viewMonth.getMonth(), d));
+      var open = slotsFor(ds).length > 0;
+      html += '<button type="button" data-d="' + ds + '"' + (open ? '' : ' disabled') + (state.date === ds ? ' class="sel"' : '') + '>' + d + '</button>';
+    }
+    $('cal').innerHTML = html;
+    $('cal').querySelectorAll('button[data-d]').forEach(function (b) {
+      b.onclick = function () { state.date = b.getAttribute('data-d'); state.time = null; showErr('err2'); renderCal(); };
+    });
+    renderSlots();
+  }
+  function renderSlots() {
+    if (!state.date || !slotsFor(state.date).length) { $('slotCard').style.display = 'none'; $('next2').disabled = true; return; }
+    $('slotCard').style.display = 'block';
+    $('slots').innerHTML = slotsFor(state.date).map(function (t) {
+      return '<button type="button" data-t="' + t + '"' + (state.time === t ? ' class="sel"' : '') + '>' + t + '</button>';
+    }).join('');
+    $('slots').querySelectorAll('button').forEach(function (b) {
+      b.onclick = function () { state.time = b.getAttribute('data-t'); showErr('err2'); renderSlots(); };
+    });
+    $('next2').disabled = !state.time;
+  }
+  $('prevM').onclick = function () { viewMonth = new Date(viewMonth.getFullYear(), viewMonth.getMonth() - 1, 1); renderCal(); };
+  $('nextM').onclick = function () { viewMonth = new Date(viewMonth.getFullYear(), viewMonth.getMonth() + 1, 1); renderCal(); };
+  $('next2').onclick = function () { if (state.date && state.time) go(3); };
+
+  // ---------- step 3 ----------
+  $('lang').querySelectorAll('button').forEach(function (b) {
+    b.onclick = function () { state.lang = b.getAttribute('data-v'); $('lang').querySelectorAll('button').forEach(function (x) { x.classList.toggle('sel', x === b); }); };
+  });
+  function renderStep3() {
+    var t = T();
+    $('meetingLabel').innerHTML = esc(t.meetingLabel) + (t.meetingRequired ? '<span class="req">*</span>' : '（任意）');
+    $('meeting').placeholder = t.meetingPlaceholder;
+    var dt = state.date.replace(/-/g, '/') + '（' + DAYS[new Date(state.date + 'T00:00:00').getDay()] + '）' + state.time;
+    var rows = [
+      ['ツアー', t.label],
+      [state.tour === 'car' ? 'エリア' : 'コース', t.choices[state.choice].label],
+      ['人数', state.pax + '名'],
+      ['日付・集合時間', dt],
+      ['目安料金', priceText()]
+    ];
+    $('summary').innerHTML = rows.map(function (r) { return '<tr><td>' + esc(r[0]) + '</td><td>' + esc(r[1]) + '</td></tr>'; }).join('');
+  }
+  $('submit').onclick = function () {
+    var t = T();
+    var name = $('name').value.trim(), email = $('email').value.trim(), meeting = $('meeting').value.trim();
+    if (!name) { showErr('err3', 'お名前をご入力ください。'); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { showErr('err3', 'メールアドレスをご確認ください。'); return; }
+    if (t.meetingRequired && !meeting) { showErr('err3', t.meetingLabel + 'をご入力ください。'); return; }
+    showErr('err3');
+    var btn = $('submit'); btn.disabled = true; btn.textContent = '送信中…';
+    var body = {
+      tour: state.tour, course: state.choice, pax: state.pax,
+      date: state.date, time: state.time, name: name, email: email,
+      phone: $('phone').value.trim(), meetingPlace: meeting, language: state.lang,
+      question: $('question').value.trim()
+    };
+    fetch(API + '/tour-inquiry', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, status: r.status, d: d }; }); })
+      .then(function (res) {
+        if (!res.ok) {
+          showErr('err3', (res.d && res.d.error) || '送信できませんでした。');
+          if (res.status === 409) { delete availCache[state.tour]; state.time = null; }
+          return;
+        }
+        $('refV').textContent = '参照番号 ' + res.d.ref;
+        go(4);
+      })
+      .catch(function () { showErr('err3', '通信エラーが発生しました。時間をおいて再度お試しいただくか、jpgbyron@gmail.com までご連絡ください。'); })
+      .then(function () { btn.disabled = false; btn.textContent = 'この内容で送信する'; });
+  };
+
+  preselect();
+  renderStep1();
+})();
+</script>
+</body>
+</html>
